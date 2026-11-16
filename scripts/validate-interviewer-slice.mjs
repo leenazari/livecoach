@@ -1,0 +1,295 @@
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
+import ts from "typescript";
+
+const nodeRequire = createRequire(import.meta.url);
+const cache = new Map();
+
+function loadTs(file) {
+  const abs = path.resolve(file);
+  if (cache.has(abs)) return cache.get(abs);
+  const source = readFileSync(abs, "utf8");
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+      esModuleInterop: true,
+    },
+  }).outputText;
+  const module = { exports: {} };
+  const dirname = path.dirname(abs);
+  const localRequire = (specifier) => {
+    if (specifier.startsWith(".")) {
+      const resolved = path.resolve(dirname, specifier);
+      return loadTs(resolved.endsWith(".ts") ? resolved : `${resolved}.ts`);
+    }
+    return nodeRequire(specifier);
+  };
+  new Function("require", "module", "exports", compiled)(localRequire, module, module.exports);
+  cache.set(abs, module.exports);
+  return module.exports;
+}
+
+const { estimateInterviewerWait } = loadTs(new URL("../lib/interviewer/wait-estimate.ts", import.meta.url).pathname);
+const { INTERVIEWER_VOICES, isInterviewerVoiceId } = loadTs(new URL("../lib/interviewer/voices.ts", import.meta.url).pathname);
+const { buildInterviewerPrompt } = loadTs(new URL("../lib/interviewer/prompt.ts", import.meta.url).pathname);
+const { isDeepgramConcurrencyRefusal } = loadTs(new URL("../lib/interviewer/concurrency.ts", import.meta.url).pathname);
+const { interviewerReadyEmailStatus } = loadTs(new URL("../lib/interviewer/ready-email.ts", import.meta.url).pathname);
+const { INTERVIEWER_FUNCTIONS } = loadTs(new URL("../lib/interviewer/agent-settings.ts", import.meta.url).pathname);
+
+const front = estimateInterviewerWait({ position: 1, slotLimit: 43, recentSeconds: [] });
+if (front.overTenMinutes || front.label !== "Less than a minute") {
+  throw new Error(`front of queue estimate was ${front.label}`);
+}
+
+const unknown = estimateInterviewerWait({ position: 4, slotLimit: 43, recentSeconds: [] });
+if (unknown.overTenMinutes || unknown.lowMinutes !== null) {
+  throw new Error("empty history invented a wait");
+}
+
+const over = estimateInterviewerWait({
+  position: 44,
+  slotLimit: 1,
+  recentSeconds: [600, 700, 800, 900],
+});
+if (!over.overTenMinutes || over.label !== "Over 10 minutes") {
+  throw new Error(`expected over 10 minutes, got ${over.label}`);
+}
+
+const short = estimateInterviewerWait({
+  position: 2,
+  slotLimit: 43,
+  recentSeconds: [120, 180, 150, 160],
+});
+if (short.overTenMinutes) throw new Error("a short queue was marked over 10 minutes");
+
+if (INTERVIEWER_VOICES.length < 40) throw new Error("Aura English catalogue is incomplete");
+if (!isInterviewerVoiceId("aura-2-draco-en") || !isInterviewerVoiceId("aura-2-thalia-en") || !isInterviewerVoiceId("aura-helios-en")) {
+  throw new Error("documented English voices missing");
+}
+if (isInterviewerVoiceId("aura-2-sirio-es")) throw new Error("non-English voice was included");
+
+const prompt = buildInterviewerPrompt({
+  campaignName: "Northwind",
+  prospectName: "Ada",
+  personaOverride: "Keep it brief.",
+  promptOverride: null,
+  maxMinutes: 12,
+  documents: [{ title: "Offer", body: "Mention the pilot only if they ask." }],
+});
+for (const required of [
+  "British English",
+  "never pushy",
+  "When are you looking to move on this?",
+  "Hot",
+  "Warm",
+  "Nurture",
+  "Bounced",
+  "Wrong number",
+  "Competitor chosen",
+  "Timing push",
+  "Closed lost",
+  "Mention the pilot only if they ask.",
+]) {
+  if (!prompt.includes(required)) throw new Error(`prompt missing ${required}`);
+}
+
+if (!isDeepgramConcurrencyRefusal({ code: 429, message: "" })) throw new Error("429");
+if (!isDeepgramConcurrencyRefusal({ message: "Too many concurrent connections" })) throw new Error("text");
+if (isDeepgramConcurrencyRefusal({ closeCode: 1006, message: "abnormal" })) {
+  throw new Error("blip treated as concurrency");
+}
+
+const names = INTERVIEWER_FUNCTIONS.map((fn) => fn.name);
+for (const name of ["suggest_meeting_times", "book_meeting", "capture_timing", "record_disposition", "end_call"]) {
+  if (!names.includes(name)) throw new Error(`missing function ${name}`);
+}
+const booking = INTERVIEWER_FUNCTIONS.find((fn) => fn.name === "book_meeting");
+if (!booking || booking.defer_until_eot !== true) throw new Error("booking must wait for end of turn");
+if (interviewerReadyEmailStatus() !== "disabled") throw new Error("ready email must stay disabled");
+
+const { cappedCallMinutes, shouldSpeakTimeWarning, TIME_WARNING_INJECT, twoMinuteLine } = loadTs(new URL("../lib/interviewer/call-limit.ts", import.meta.url).pathname);
+if (cappedCallMinutes(null, 3, "Adam test: promote Adam") !== 3) throw new Error("a test campaign did not take the short cap");
+if (cappedCallMinutes(null, "3", "Adam test: promote Adam") !== 3) throw new Error("a string cap was ignored");
+if (cappedCallMinutes(null, 3, "Swoopos EPOS") !== 30) throw new Error("a live campaign accepted a short cap");
+if (cappedCallMinutes(30, 90, "Adam test") !== 30) throw new Error("a test cap lengthened the call");
+if (cappedCallMinutes(null, undefined, "Adam test") !== 30) throw new Error("a missing cap changed the default");
+if (!shouldSpeakTimeWarning(120, false) || !shouldSpeakTimeWarning(0, false)) throw new Error("the warning was skipped at the window or at zero");
+if (shouldSpeakTimeWarning(121, false) || shouldSpeakTimeWarning(30, true)) throw new Error("the warning fired too early or twice");
+if (TIME_WARNING_INJECT !== "interrupt") throw new Error("the warning can still be refused while someone is speaking");
+if (!twoMinuteLine(false).includes("two minutes left") || !twoMinuteLine(false).includes("human team")) {
+  throw new Error("the warning line lost the human-team offer");
+}
+
+const { isPublicInterviewerJoin, isPublicInterviewerApi } = loadTs(new URL("../lib/interviewer/public-route.ts", import.meta.url).pathname);
+const { previewProtectionQuery, appendShareQuery } = loadTs(new URL("../lib/interviewer/share-link.ts", import.meta.url).pathname);
+const joinToken = "95e82fde-d618-4c05-87eb-fcaa7d0d9722";
+if (!isPublicInterviewerJoin(`/i/${joinToken}`)) throw new Error("the demo call route was treated as private");
+if (isPublicInterviewerJoin("/crm/interviewer") || isPublicInterviewerJoin("/i") || isPublicInterviewerJoin(`/i/${joinToken}/extra`) || isPublicInterviewerJoin("/c")) {
+  throw new Error("a private or incomplete path was treated as the demo call");
+}
+if (!isPublicInterviewerJoin(`/c/${joinToken}`)) throw new Error("the shareable campaign link was treated as private");
+const { micStartPlan } = loadTs(new URL("../lib/interviewer/mic-start.ts", import.meta.url).pathname);
+if (micStartPlan("granted") !== "auto" || micStartPlan("prompt") !== "button" || micStartPlan("unknown") !== "button" || micStartPlan("denied") !== "blocked") {
+  throw new Error("microphone start still has a separate allow step");
+}
+const publicCampaign = loadTs(new URL("../lib/interviewer/public-campaign.ts", import.meta.url).pathname);
+if (publicCampaign.publicCallMinutes(180) !== 30 || publicCampaign.publicCallMinutes(null) !== 30) {
+  throw new Error("a public call could run past 30 minutes");
+}
+if (publicCampaign.publicCallsOpen([]) !== true || publicCampaign.publicCallsOpen([{ title: "Public calls", body: "off" }]) !== false) {
+  throw new Error("campaign on/off was not read from the existing note");
+}
+const nameless = publicCampaign.validatePublicLead({ name: " ", email: "not-an-email" });
+if (!nameless.fields.prospectName || !nameless.fields.prospectEmail) throw new Error("public name and email were not required");
+const named = publicCampaign.validatePublicLead({ name: "Sharon", email: "Sharon@Example.com" });
+if (named.email !== "sharon@example.com" || Object.keys(named.fields).length) throw new Error("a valid public lead was rejected");
+if (!publicCampaign.honeypotTripped("http://spam") || publicCampaign.honeypotTripped("  ")) throw new Error("the honeypot check is wrong");
+publicCampaign.resetPublicJoinLimits();
+for (let attempt = 0; attempt < 5; attempt += 1) {
+  if (!publicCampaign.allowPublicJoin("ip:203.0.113.8", 5, 1000, 5000)) throw new Error("an allowed public start was blocked");
+}
+if (publicCampaign.allowPublicJoin("ip:203.0.113.8", 5, 1000, 5000)) throw new Error("the IP limit did not trip");
+if (publicCampaign.publicSummary("Adam", [{ title: "Business summary", body: "Adam answers after hours. Extra detail." }], "") !== "Adam answers after hours.") {
+  throw new Error("the landing summary was not the first note sentence");
+}
+if (publicCampaign.publicSummary("Adam", [{ title: "Public calls", body: "off" }], "Answers the phone.") !== "Answers the phone.") {
+  throw new Error("the on/off note was used as the public summary");
+}
+const quietPrompt = buildInterviewerPrompt({
+  campaignName: "Adam",
+  prospectName: "Sharon",
+  personaOverride: null,
+  promptOverride: null,
+  maxMinutes: 30,
+  documents: [{ title: "Public calls", body: "off" }, { title: "Business summary", body: "Adam answers the website." }],
+});
+if (/public calls/i.test(quietPrompt)) throw new Error("the agent was told the public on/off note");
+const { accentFromSamples, LANDING_ACCENT } = loadTs(new URL("../lib/interviewer/slide-colour.ts", import.meta.url).pathname);
+if (accentFromSamples([{ r: 250, g: 250, b: 250 }]).accent !== LANDING_ACCENT) {
+  throw new Error("a blank slide invented a colour");
+}
+if (accentFromSamples([{ r: 21, g: 93, b: 252 }]).accent !== "#155dfc") {
+  throw new Error("brand blue was not kept");
+}
+if (accentFromSamples([{ r: 15, g: 110, b: 86 }]).accent !== "#0f6e56") {
+  throw new Error("a colour actually in the slide was replaced");
+}
+const landingCss = readFileSync(new URL("../components/interviewer/interviewa.module.css", import.meta.url), "utf8");
+if (landingCss.includes("#0f6e56") || landingCss.includes("linear-gradient(160deg")) {
+  throw new Error("the landing hero still paints a placeholder colour");
+}
+const landingSource = readFileSync(new URL("../components/interviewer/CampaignLanding.tsx", import.meta.url), "utf8");
+const joinSource = readFileSync(new URL("../app/api/interviewer/public-join/route.ts", import.meta.url), "utf8");
+if (landingSource.includes("company_fax") || joinSource.includes("company_fax")) {
+  throw new Error("the public form still uses a fax field phones will autofill");
+}
+if (!joinSource.includes("reason: \"paused\"") || !joinSource.includes("reason: \"rate-email\"") || !joinSource.includes("reason: \"rate-network\"")) {
+  throw new Error("public start still hides the reason for a refusal");
+}
+if (!isPublicInterviewerApi("/api/interviewer/token") || !isPublicInterviewerApi("/api/interviewer/slots/claim")) {
+  throw new Error("the call APIs were treated as private");
+}
+if (isPublicInterviewerApi("/api/interview") || isPublicInterviewerApi("/api/crm/interviewer/campaigns")) {
+  throw new Error("a CRM or coach route was treated as the public call API");
+}
+if (previewProtectionQuery({ VERCEL_ENV: "production", VERCEL_AUTOMATION_BYPASS_SECRET: "secret" })) {
+  throw new Error("production links included the preview pass");
+}
+if (previewProtectionQuery({ VERCEL_ENV: "preview", VERCEL_AUTOMATION_BYPASS_SECRET: "" })) {
+  throw new Error("an empty preview secret was appended");
+}
+const shareQuery = previewProtectionQuery({ VERCEL_ENV: "preview", VERCEL_AUTOMATION_BYPASS_SECRET: "team pass" });
+if (!shareQuery.includes("x-vercel-protection-bypass=team+pass") || !shareQuery.includes("x-vercel-set-bypass-cookie=true")) {
+  throw new Error(`preview share query was ${shareQuery}`);
+}
+const shared = appendShareQuery(`https://preview.vercel.app/i/${joinToken}?capMinutes=3`, shareQuery);
+if (!shared.startsWith(`https://preview.vercel.app/i/${joinToken}?capMinutes=3&x-vercel-protection-bypass=`)) {
+  throw new Error(`shared link was ${shared}`);
+}
+if (appendShareQuery(`https://livecoach.example/i/${joinToken}`, "") !== `https://livecoach.example/i/${joinToken}`) {
+  throw new Error("an empty share query changed a production link");
+}
+
+const { PGlite } = await import("@electric-sql/pglite");
+const db = new PGlite();
+await db.exec(`
+  create role anon;
+  create role authenticated;
+  create role service_role bypassrls;
+  create schema auth;
+  create schema storage;
+  create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+  create table auth.users (id uuid primary key);
+  create table storage.buckets (
+    id text primary key,
+    name text,
+    public boolean,
+    file_size_limit bigint,
+    allowed_mime_types text[]
+  );
+  create table public.workspaces (id uuid primary key);
+  create table public.workspace_members (
+    workspace_id uuid references public.workspaces(id) on delete cascade,
+    user_id uuid references auth.users(id) on delete cascade,
+    role text,
+    status text,
+    primary key (workspace_id, user_id)
+  );
+`);
+const migration = readFileSync(new URL("../supabase/migrations/20261114130000_interviewer_foundation.sql", import.meta.url), "utf8");
+await db.exec(migration);
+
+const workspace = "11111111-1111-4111-8111-111111111111";
+const owner = "22222222-2222-4222-8222-222222222222";
+await db.query(`insert into auth.users (id) values ($1)`, [owner]);
+await db.query(`insert into public.workspaces (id) values ($1)`, [workspace]);
+await db.query(
+  `insert into public.workspace_members (workspace_id, user_id, role, status) values ($1, $2, 'owner', 'active')`,
+  [workspace, owner]
+);
+await db.query(
+  `insert into public.interviewer_access (workspace_id, user_id) values ($1, $2) on conflict do nothing`,
+  [workspace, owner]
+);
+await db.query(`update public.interviewer_config set max_concurrent_slots = 1 where id = 1`);
+const campaign = await db.query(
+  `insert into public.interviewer_campaigns (workspace_id, owner_id, name, voice_id, rate_per_minute, currency, margin_percent, billing_granularity)
+   values ($1, $2, 'Pilot', 'aura-2-draco-en', 2.5, 'GBP', 20, 'minute') returning id`,
+  [workspace, owner]
+);
+const campaignId = campaign.rows[0].id;
+const invite = await db.query(
+  `insert into public.interviewer_invites (workspace_id, campaign_id, prospect_name, expires_at, created_by)
+   values ($1, $2, 'Ada', now() + interval '1 day', $3) returning token`,
+  [workspace, campaignId, owner]
+);
+const token = invite.rows[0].token;
+const first = await db.query(`select public.claim_interviewer_slot($1, null) as state`, [token]);
+if (first.rows[0].state.state !== "claimed") throw new Error(`first claim was ${JSON.stringify(first.rows[0].state)}`);
+const sessionId = first.rows[0].state.sessionId;
+await db.query(`update public.interviewer_sessions set connected_at = now() - interval '4 minutes', status = 'connected' where id = $1`, [sessionId]);
+const secondInvite = await db.query(
+  `insert into public.interviewer_invites (workspace_id, campaign_id, prospect_name, expires_at, created_by)
+   values ($1, $2, 'Bea', now() + interval '1 day', $3) returning token`,
+  [workspace, campaignId, owner]
+);
+const queued = await db.query(`select public.claim_interviewer_slot($1, null) as state`, [secondInvite.rows[0].token]);
+if (queued.rows[0].state.state === "claimed") throw new Error("second caller took the only seat");
+if (Number(queued.rows[0].state.position) !== 1) throw new Error(`queue position ${queued.rows[0].state.position}`);
+const beat = await db.query(`select public.heartbeat_interviewer_slot($1, $2) as state`, [token, sessionId]);
+if (beat.rows[0].state.ok !== true) throw new Error("heartbeat failed");
+await db.query(`update public.interviewer_slots set last_heartbeat_at = now() - interval '1 minute' where session_id = $1`, [sessionId]);
+const advanced = await db.query(`select public.interviewer_queue_status($1, $2) as state`, [secondInvite.rows[0].token, queued.rows[0].state.sessionId]);
+if (advanced.rows[0].state.state !== "offered" && advanced.rows[0].state.state !== "claimed") {
+  throw new Error(`stale seat did not move the queue: ${JSON.stringify(advanced.rows[0].state)}`);
+}
+const billed = await db.query(`select status, billable_seconds from public.interviewer_sessions where id = $1`, [sessionId]);
+if (billed.rows[0].status !== "ended" || Number(billed.rows[0].billable_seconds) < 120) {
+  throw new Error(`stale session billing ${JSON.stringify(billed.rows[0])}`);
+}
+const ended = await db.query(`select public.end_interviewer_session($1, $2) as state`, [secondInvite.rows[0].token, queued.rows[0].state.sessionId]);
+if (Number(ended.rows[0].state.billableSeconds) !== 0) throw new Error("queue time was billed");
+
+console.log("interviewer slice checks passed");

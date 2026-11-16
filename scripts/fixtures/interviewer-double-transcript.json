@@ -1,0 +1,32 @@
+[
+  {
+    "name": "interim then one final, speech_final repeats it",
+    "frames": [
+      { "transcript": "hel", "isFinal": false, "speechFinal": false, "start": 0.2 },
+      { "transcript": "hello there", "isFinal": false, "speechFinal": false, "start": 0.2 },
+      { "transcript": "hello there", "isFinal": true, "speechFinal": false, "start": 0.2 },
+      { "transcript": "hello there", "isFinal": true, "speechFinal": true, "start": 0.2 }
+    ],
+    "committed": ["hello there"],
+    "lastInterim": ""
+  },
+  {
+    "name": "two different final segments, speech_final adds only the new words",
+    "frames": [
+      { "transcript": "hello", "isFinal": true, "speechFinal": false, "start": 0.1 },
+      { "transcript": "there", "isFinal": true, "speechFinal": true, "start": 0.8 }
+    ],
+    "committed": ["hello", "there"],
+    "lastInterim": ""
+  },
+  {
+    "name": "same start time replaces instead of appending",
+    "frames": [
+      { "transcript": "hello", "isFinal": true, "speechFinal": false, "start": 1 },
+      { "transcript": "hello there", "isFinal": true, "speechFinal": false, "start": 1 },
+      { "transcript": "hello there", "isFinal": true, "speechFinal": true, "start": 1 }
+    ],
+    "committed": ["hello there"],
+    "lastInterim": ""
+  }
+]
