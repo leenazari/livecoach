@@ -1,4 +1,5 @@
 "use client";
+import CallActionPack from "@/components/CallActionPack";
 import GetCallCoaching from "@/components/GetCallCoaching";
 
 import { useEffect, useRef, useState } from "react";
@@ -833,6 +834,7 @@ export default function PostCallSummary({
             )
           )}
 
+          {sessionId && <CallActionPack sessionId={sessionId} />}
           {sessionId && <GetCallCoaching sessionId={sessionId} />}
           <CallNotes sessionId={sessionId} initial={view.userNotes || ""} />
 

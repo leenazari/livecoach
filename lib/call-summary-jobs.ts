@@ -1,4 +1,5 @@
 import "server-only";
+import { prepareCallActions } from "@/lib/call-action-preparation";
 
 import { NextRequest } from "next/server";
 import { POST as buildCallSummary } from "@/app/api/interview/summary/route";
@@ -113,7 +114,7 @@ export async function runCallSummaryJob(
 
   const { data: existing, error: existingError } = await supabaseAdmin
     .from("interview_summaries")
-    .select("summary")
+    .select("id,summary")
     .eq("workspace_id", accountScope.workspaceId)
     .eq("owner_id", accountScope.userId)
     .eq("session_id", sessionId)
@@ -121,6 +122,7 @@ export async function runCallSummaryJob(
     .maybeSingle();
   if (existingError) throw existingError;
   if (existing?.summary) {
+    await prepareCallActions(existing.id).catch(() => console.error("Saved call actions queued for recovery"));
     await supabaseAdmin
       .from("interview_sessions")
       .update({ summary_error: null })
@@ -224,7 +226,7 @@ export async function runCallSummaryJob(
 
   const { data: saved, error: savedError } = await supabaseAdmin
     .from("interview_summaries")
-    .select("summary")
+    .select("id,summary")
     .eq("workspace_id", accountScope.workspaceId)
     .eq("owner_id", accountScope.userId)
     .eq("session_id", sessionId)
@@ -232,6 +234,7 @@ export async function runCallSummaryJob(
     .maybeSingle();
   if (savedError) throw savedError;
   const landed = !!saved?.summary;
+  if (landed && saved?.id) await prepareCallActions(saved.id).catch(() => console.error("Call actions queued for recovery"));
   const error = landed ? null : safeFailure(failure);
   const { error: stateError } = await supabaseAdmin
     .from("interview_sessions")

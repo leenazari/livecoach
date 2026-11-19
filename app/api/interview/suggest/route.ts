@@ -42,6 +42,7 @@ export async function POST(req: NextRequest) {
       planBrief,
       salesProducts,
       scriptStage,
+      scriptVersion,
       allowHold,
       requestedFocus,
       focusAreas,
@@ -209,7 +210,7 @@ CONTENT:
       getSalesProfileContextBlock(),
     ]);
 
-    const approvedProductContext = scriptContext(salesProducts, scriptStage);
+    const approvedProductContext = scriptContext(salesProducts, scriptStage, scriptVersion);
     const system: any[] = [
       ...(approvedProductContext ? [{ type: "text", text: approvedProductContext }] : []),
       { type: "text", text: instructions },

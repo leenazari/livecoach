@@ -120,7 +120,7 @@ export async function POST(req: NextRequest) {
           };
     const { data: savedCall, error: savedCallError } = await supabaseService
       .from("interview_summaries")
-      .select("id,summary,candidate,role,company_id,created_at")
+      .select("id,summary,candidate,role,company_id,created_at,post_call_preparation_state")
       .eq("workspace_id", scope.workspaceId)
       .eq("owner_id", scope.userId)
       .eq("session_id", sessionId)
@@ -137,6 +137,7 @@ export async function POST(req: NextRequest) {
         { status: 409 }
       );
     }
+    const canonicalActions = savedCall.post_call_preparation_state != null;
     const summary = savedCall.summary;
     const candidate = savedCall.candidate;
     const role = savedCall.role;
@@ -385,7 +386,7 @@ Return the JSON now.`;
     // Idempotent per call. Follow-up drafts may be replaced, but opportunity
     // history is never deleted. The canonical helper reuses the one active
     // revenue opportunity for this company-wide relationship.
-    if (sessionId) {
+    if (!canonicalActions && sessionId) {
       await supabaseAdmin
         .from("follow_ups")
         .delete()
@@ -413,6 +414,7 @@ Return the JSON now.`;
 
     // The host's own commitments from this call become trackable tasks
     // (deduped, so re-summarising the same call never duplicates them).
+    if (!canonicalActions) {
     const myActions = commitments.filter(
       (commitment) => commitment.ownerType === "me" || commitment.ownerType === "joint"
     );
@@ -472,6 +474,7 @@ Return the JSON now.`;
       if (followUpError) throw followUpError;
     }
 
+    }
     const completionPackage = {
       relationship: { brief, playbook },
       commercial: {
@@ -488,6 +491,7 @@ Return the JSON now.`;
       followUp,
       generatedAt: new Date().toISOString(),
     };
+    if (!canonicalActions) {
     const { error: packageError } = await supabaseAdmin
       .from("interview_summaries")
       .update({ post_call_package: completionPackage })
@@ -496,13 +500,14 @@ Return the JSON now.`;
       .eq("workspace_id", scope.workspaceId)
       .eq("owner_id", scope.userId);
     if (packageError) throw packageError;
+    }
 
     return NextResponse.json({
       ok: true,
       opportunities: opportunityCreated ? 1 : 0,
       opportunityConfirmation,
       pipelineExcluded: !!pipelineExclusion,
-      followUp: !!followUp,
+      followUp: !canonicalActions && !!followUp,
       profileUpdated: access.mode === "owner",
       completionPackage,
     });

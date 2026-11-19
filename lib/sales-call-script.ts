@@ -12,7 +12,7 @@ export type ScriptStep = {
   guidance: string;
   questions: string[];
 };
-export const ADAM_SCRIPT = {
+export const ADAM_SCRIPT_V1 = {
   version: "adam-2026-11-19-v1",
   name: "Adam demo: 15 minutes",
   source: "Lee-approved Adam Demo Script - 15 Minutes",
@@ -67,6 +67,79 @@ export const ADAM_SCRIPT = {
     },
   ] as ScriptStep[],
 };
+export const ADAM_SCRIPT = {
+  ...ADAM_SCRIPT_V1,
+  version: "adam-2026-11-19-v2",
+  name: "Adam: problem, impact, proof and next step",
+  source: "Refined from Lee's Adam demo script following the sales-flow review",
+  before:
+    "Review the prospect's business, outreach reply and call intent. Pick one grounded opening, one likely problem to check, and a relevant demo scenario. Treat research as a hypothesis until the prospect confirms it.",
+  rule: "Understand the problem and its impact. Demonstrate one relevant outcome. Agree who does what by when.",
+  steps: [
+    {
+      id: "hook",
+      title: "Agree the purpose",
+      minutes: "0–2 min",
+      guidance:
+        "Use their own example or a verified business detail, then agree what would make this conversation useful. Explain Adam briefly using approved product facts. Do not assume they have a problem or launch into features.",
+      questions: [
+        "What prompted you to look at this now?",
+        "What would make these fifteen minutes useful for you?",
+      ],
+    },
+    {
+      id: "discovery",
+      title: "Problem and business impact",
+      minutes: "2–6 min",
+      guidance:
+        "Start with how it works today and one real example. Follow only the unanswered gaps: frequency, business impact and what they want instead. Two opening questions are a starting point, not a hard limit. Listen, reflect their words, and avoid asking again when prep or the call already provides the answer. Use their figures only, never invent an ROI.",
+      questions: [
+        "Talk me through what happened with your last website enquiry.",
+        "Where does that process tend to break down?",
+        "When that happens, what does it mean for the business?",
+        "What would a useful improvement look like?",
+      ],
+    },
+    {
+      id: "demo",
+      title: "Show their situation",
+      minutes: "6–10 min",
+      guidance:
+        "Confirm their problem back in their words, then demonstrate ONE relevant situation from their answers. Use their customer, sector and scenario. Show only verified Adam capabilities. Stop and invite a reaction, including what does not fit. A transcript alone cannot verify what was shown on screen.",
+      questions: [
+        "How would that work with the example you just gave me?",
+        "What would need to change for your team?",
+      ],
+    },
+    {
+      id: "close",
+      title: "Resolve the concern and decision",
+      minutes: "10–13 min",
+      guidance:
+        "Check the demonstrated outcome against their stated problem and success criteria. If hesitant, acknowledge the concern and clarify what is underneath it, then give one grounded response and check it helped. Find out who else is involved and what needs to be checked before a decision. Quote only the supplied offer and clarify what it covers: Rebelk is £39, set up today, leads flowing by tomorrow morning. Never invent a billing period, discount, ROI, capability or guarantee. Check setup prerequisites and availability before promising timing.",
+      questions: [
+        "Does that solve the issue you described?",
+        "What is the main thing you would need to feel comfortable?",
+        "Who else needs to be involved in deciding this?",
+      ],
+    },
+    {
+      id: "next_step",
+      title: "Agree a mutual next step",
+      minutes: "13–15 min",
+      guidance:
+        "Choose the right outcome: an agreed next step for a fit, a specific check for an unresolved question, or an honest no-fit. Agree the action, owner, date, time if relevant and purpose in the prospect's words. For an already booked meeting, confirm it rather than proposing another. If no date is agreed, record that gap. Do not invent Thursday at ten or claim a booking, proposal or email is already done. Recap both sides' commitments so LiveCoach can prepare the work after the call.",
+      questions: [
+        "What is the most useful next step from here?",
+        "What shall we each do before we speak again?",
+        "When should we review that together?",
+      ],
+    },
+  ] as ScriptStep[],
+};
+export function approvedAdamScript(version?: string | null) {
+  return version === ADAM_SCRIPT_V1.version ? ADAM_SCRIPT_V1 : ADAM_SCRIPT;
+}
 export type ScriptChange = {
   at: string;
   elapsedSeconds: number;
@@ -89,6 +162,7 @@ export function cleanStage(value: unknown) {
 export function scriptContext(
   productsValue: unknown,
   stageValue: unknown,
+  version?: string | null,
 ): string {
   const products = cleanProducts(productsValue);
   if (!products.length) return "";
@@ -96,12 +170,13 @@ export function scriptContext(
     .map((p) => p.label)
     .join(" + ");
   const missing = products.filter((p) => p !== "adam");
-  return `APPROVED PRODUCT SCRIPT: ${selected}\n${products.includes("adam") ? JSON.stringify(ADAM_SCRIPT) : "No approved script has been supplied for this product. Use saved intent and research; do not invent a company-approved script or score against one."}\n${missing.length && products.includes("adam") ? "A combined script has not been approved yet. Use the approved Adam sections only where relevant, keep other interests available, and do not penalise missing unsupplied sections." : ""}\nCurrent host-selected stage: ${cleanStage(stageValue)}. The approved script has priority over a generic generated playbook. Move toward the next unanswered script point, avoiding repeats.\nPERSONALISATION: Use the prospect\'s own examples and exact wording from earlier in the conversation first; otherwise use a relevant example from saved business research. Never invent a customer quote or assume research is verified. Their live corrections override research.\nOBJECTIONS: When the prospect voices a concern, promptly offer one concise, kind, intelligent response or clarifying question, using their scenario. No pressure, invented proof, fake urgency or argumentative rebuttal. Then return naturally to the script. Only the host can change selected products.`;
+  return `APPROVED PRODUCT SCRIPT: ${selected}\n${products.includes("adam") ? JSON.stringify(approvedAdamScript(version)) : "No approved script has been supplied for this product. Use saved intent and research; do not invent a company-approved script or score against one."}\n${missing.length && products.includes("adam") ? "A combined script has not been approved yet. Use the approved Adam sections only where relevant, keep other interests available, and do not penalise missing unsupplied sections." : ""}\nCurrent host-selected stage: ${cleanStage(stageValue)}. The approved script has priority over a generic generated playbook. Move toward the next unanswered script point, avoiding repeats.\nPERSONALISATION: Use the prospect\'s own examples and exact wording from earlier in the conversation first; otherwise use a relevant example from saved business research. Never invent a customer quote or assume research is verified. Their live corrections override research.\nOBJECTIONS: When the prospect voices a concern, promptly offer one concise, kind, intelligent response or clarifying question, using their scenario. No pressure, invented proof, fake urgency or argumentative rebuttal. Then return naturally to the script. Only the host can change selected products.`;
 }
 export function nextTimeline(
   previous: ScriptChange[],
   input: Omit<ScriptChange, "at" | "version">,
   now = new Date().toISOString(),
+  version = ADAM_SCRIPT.version,
 ): ScriptChange[] {
   const last = previous.at(-1);
   const products = cleanProducts(input.products);
@@ -119,7 +194,7 @@ export function nextTimeline(
       products,
       stage,
       at: now,
-      version: products.includes("adam") ? ADAM_SCRIPT.version : null,
+      version: products.includes("adam") ? approvedAdamScript(version).version : null,
     },
   ].slice(-100);
 }

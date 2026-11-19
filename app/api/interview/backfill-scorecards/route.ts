@@ -1,3 +1,4 @@
+import { recoverCallActionPreparation } from "@/lib/call-action-preparation";
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { runCallSummaryJob } from "@/lib/call-summary-jobs";
@@ -160,6 +161,7 @@ async function runAccount(req: Request) {
       }
     }
 
+    if (Date.now() - started < BUDGET_MS - 45000) await recoverCallActionPreparation();
     return NextResponse.json({
       ok: true,
       orphans: orphans.length,
