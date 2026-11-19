@@ -45,6 +45,10 @@ function compile(file, deps = {}, globals = {}) {
 }
 const plain = (v) => JSON.parse(JSON.stringify(v));
 const script = compile("lib/sales-call-script.ts");
+assert.notEqual(script.ADAM_SCRIPT.version,script.ADAM_SCRIPT_V1.version);
+assert.equal(script.approvedAdamScript(script.ADAM_SCRIPT_V1.version).steps[1].title,'Discovery');
+assert.match(script.scriptContext(['adam'],'hook',script.ADAM_SCRIPT_V1.version),/adam-2026-11-19-v1/);
+assert.equal(script.nextTimeline([],{products:['adam'],stage:'hook',elapsedSeconds:0,transcriptChars:0},undefined,script.ADAM_SCRIPT_V1.version)[0].version,script.ADAM_SCRIPT_V1.version);
 const reportLib = compile("lib/script-coaching-report.ts", {
   "./sales-call-script": script,
 });
@@ -701,7 +705,7 @@ await act(async () =>
 assert.deepEqual(plain(chosen), ["adam", "recruitment"]);
 await act(async () =>
   [...document.querySelectorAll("button")]
-    .find((b) => b.textContent === "Discovery")
+    .find((b) => b.textContent === script.ADAM_SCRIPT.steps[1].title)
     .click(),
 );
 assert.equal(selectedStage, "discovery");

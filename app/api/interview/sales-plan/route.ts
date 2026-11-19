@@ -157,6 +157,8 @@ export async function POST(req: NextRequest) {
               Math.min(2000000, Number(body.transcriptChars) || 0),
             ),
           },
+          undefined,
+          previous?.script_snapshot?.version || ADAM_SCRIPT.version,
         )
       : [];
     const now = new Date().toISOString();
@@ -169,7 +171,7 @@ export async function POST(req: NextRequest) {
       products,
       stage,
       prep,
-      script_snapshot: previous?.script_snapshot?.version
+      script_snapshot: sessionId && previous?.script_snapshot?.version
         ? previous.script_snapshot
         : products.includes("adam")
           ? ADAM_SCRIPT

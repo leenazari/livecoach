@@ -1,10 +1,11 @@
 "use client";
 import {
-  ADAM_SCRIPT,
+  approvedAdamScript,
   SALES_PRODUCTS,
   type SalesProduct,
 } from "@/lib/sales-call-script";
 type Props = {
+  scriptVersion?: string;
   products: SalesProduct[];
   onChange: (v: SalesProduct[]) => void;
   stage: string;
@@ -16,9 +17,10 @@ type Props = {
   live?: boolean;
 };
 export default function SalesScriptPanel(props: Props) {
+  const script = approvedAdamScript(props.scriptVersion);
   const adam = props.products.includes("adam");
   const step =
-    ADAM_SCRIPT.steps.find((s) => s.id === props.stage) || ADAM_SCRIPT.steps[0];
+    script.steps.find((s) => s.id === props.stage) || script.steps[0];
   return (
     <section
       className="my-3 rounded-xl border border-sky/35 bg-panel p-4"
@@ -109,7 +111,7 @@ export default function SalesScriptPanel(props: Props) {
             role="group"
             aria-label="Script stage"
           >
-            {ADAM_SCRIPT.steps.map((s) => (
+            {script.steps.map((s) => (
               <button
                 type="button"
                 key={s.id}
@@ -135,10 +137,10 @@ export default function SalesScriptPanel(props: Props) {
           </ul>
           {!props.live && (
             <p className="mt-3 text-xs text-muted">
-              Before the call: {ADAM_SCRIPT.before}
+              Before the call: {script.before}
             </p>
           )}
-          <p className="mt-3 text-xs text-muted">{ADAM_SCRIPT.rule}</p>
+          <p className="mt-3 text-xs text-muted">{script.rule}</p>
         </>
       )}
     </section>

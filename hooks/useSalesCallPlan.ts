@@ -2,6 +2,8 @@
 import { useEffect, useRef, useState } from "react";
 import { crmFetch } from "@/lib/crm";
 import {
+  ADAM_SCRIPT,
+  approvedAdamScript,
   cleanProducts,
   cleanStage,
   type SalesProduct,
@@ -19,6 +21,8 @@ type Options = {
   hydrate: (prep: any) => void;
 };
 export function useSalesCallPlan(options: Options) {
+  const [scriptVersion, setScriptVersion] = useState(ADAM_SCRIPT.version);
+  const scriptVersionRef = useRef(ADAM_SCRIPT.version);
   const [products, setProducts] = useState<SalesProduct[]>([]);
   const [stage, setStage] = useState("hook");
   const [status, setStatus] = useState("Loading saved preparation…");
@@ -74,6 +78,11 @@ export function useSalesCallPlan(options: Options) {
           /* storage unavailable */
         }
         const seed = data.seedPlan;
+        const revision = data.plan?.session_id
+          ? approvedAdamScript(data.plan.script_snapshot?.version).version
+          : ADAM_SCRIPT.version;
+        scriptVersionRef.current = revision;
+        setScriptVersion(revision);
         const useCache =
           cached?.savedAt &&
           (!data.plan || cached.savedAt > data.plan.updated_at);
@@ -219,6 +228,8 @@ export function useSalesCallPlan(options: Options) {
   };
   return {
     products,
+    scriptVersion,
+    scriptVersionRef,
     choose,
     stage,
     setStage,

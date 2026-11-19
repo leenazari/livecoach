@@ -1150,7 +1150,7 @@ export default function CallPage() {
     }
   }, [callLive, lines.length, room]);
   const productScriptPanel = (live = false) => <SalesScriptPanel
-    products={salesPlan.products} onChange={salesPlan.choose} stage={salesPlan.stage}
+    scriptVersion={salesPlan.scriptVersion} products={salesPlan.products} onChange={salesPlan.choose} stage={salesPlan.stage}
     onStage={salesPlan.setStage} status={salesPlan.status} ready={salesPlan.ready}
     improvement={salesPlan.improvement} onRetry={salesPlan.retry} live={live}
   />;
@@ -1790,6 +1790,7 @@ export default function CallPage() {
           planBrief: planBriefRef.current,
           salesProducts: salesPlan.scriptRef.current.products,
           scriptStage: salesPlan.scriptRef.current.stage,
+          scriptVersion: salesPlan.scriptVersionRef?.current,
           allowHold: !force && !focus,
           ...(focus ? {
             requestedFocus: focus,
@@ -2031,6 +2032,7 @@ export default function CallPage() {
           planBrief: planBriefRef.current,
           salesProducts: salesPlan.scriptRef.current.products,
           scriptStage: salesPlan.scriptRef.current.stage,
+          scriptVersion: salesPlan.scriptVersionRef?.current,
         }),
       });
       addUsageToRef(aiUsdRef, res);
