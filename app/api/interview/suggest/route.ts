@@ -1,3 +1,4 @@
+import { scriptContext } from "@/lib/sales-call-script";
 import { NextRequest } from "next/server";
 import {
   isTransientOpenAIError,
@@ -39,6 +40,8 @@ export async function POST(req: NextRequest) {
       privateNotes,
       playbook,
       planBrief,
+      salesProducts,
+      scriptStage,
       allowHold,
       requestedFocus,
       focusAreas,
@@ -74,10 +77,10 @@ export async function POST(req: NextRequest) {
       Array.isArray(privateNotes) && privateNotes.length
         ? privateNotes.filter((p: any) => typeof p === "string" && p.trim())
         : [];
-    const salesMode = callType === "sales";
+    const salesMode = callType === "sales" || (Array.isArray(salesProducts) && salesProducts.length > 0);
     const salesShape = salesMode
       ? `\n\nSALES SCRIPT MODE:
-- Treat the saved ADAPTIVE SALES SCRIPT as a route, not a checklist. Work out which stages the transcript has already covered and choose the next unanswered commercial question.
+- Follow the APPROVED PRODUCT SCRIPT when selected; otherwise use the saved ADAPTIVE SALES SCRIPT. Work out which stages the transcript has already covered and choose the next unanswered commercial question.
 - Do not pitch until they reveal a relevant need. Once they do, bridge to the single prepared benefit or proof that best matches it.
 - Add these concise sections after WHY:
   ||LISTENFOR|| <the concrete buying, pain, authority, objection or timing signal, under 9 words>
@@ -163,7 +166,7 @@ OUTPUT SHAPE (strict). Output ONLY the cue - never your analysis, never a descri
   HOLD
 
 Rules for each part:
-- MAIN: the question to ask and NOTHING else. Do NOT open with an affirmation or commentary on the answer (no "That's a really...", no "I'm curious...", no recap). Lead straight with the question, warmly phrased. EXACTLY ONE question - one question mark only. MAXIMUM 15 words. No second question, no "and", no compound. The interviewer adds their own warmth in the room; your job is the crisp question. NEVER a statement with the real question pushed into the follow-up. You MAY address a participant by name inside the question; you may NOT narrate them in the third person.
+- MAIN: normally the next question. For a detected prospect objection in an approved product script, a short empathetic response followed by one clarifying question is allowed, maximum 35 words. Otherwise the question to ask and NOTHING else. Do NOT open with an affirmation or commentary on the answer (no "That's a really...", no "I'm curious...", no recap). Lead straight with the question, warmly phrased. EXACTLY ONE question - one question mark only. MAXIMUM 15 words, except the approved-product objection response described above may use 35 words. No second question, no "and", no compound. The interviewer adds their own warmth in the room; your job is the crisp question. NEVER a statement with the real question pushed into the follow-up. You MAY address a participant by name inside the question; you may NOT narrate them in the third person.
 - WHY: under 6 words, spoken TO the interviewer using "you/your", flagging what this probes or catches (e.g. "tests ownership", "they dodged your question"). Always include it. Never describe a participant in third person.
 - FOLLOW-UP: optional, ONE short question under 15 words - the natural deeper probe for once they answer. Not compound. Omit it (and its marker) if there isn't a clean one.
 
@@ -206,7 +209,9 @@ CONTENT:
       getSalesProfileContextBlock(),
     ]);
 
+    const approvedProductContext = scriptContext(salesProducts, scriptStage);
     const system: any[] = [
+      ...(approvedProductContext ? [{ type: "text", text: approvedProductContext }] : []),
       { type: "text", text: instructions },
       ...(salesProfile
         ? [

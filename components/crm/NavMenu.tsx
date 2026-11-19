@@ -62,7 +62,7 @@ const SALES_CORE_ITEMS: Item[] = [
   CLIENTS_ITEM,
 ];
 const MORE_ITEMS: Item[] = [
-  { href: "/crm/call-coach", label: "Call coach", icon: "◎" },
+  { href: "/crm/call-coach", label: "Call Coaching", icon: "◎" },
   { href: "/crm/health", label: "Health", icon: "✓" },
   { href: "/settings/readiness", label: "Account readiness", icon: "◌" },
   { href: "/settings/sales-profile", label: "My setup", icon: "◉" },

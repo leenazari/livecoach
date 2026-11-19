@@ -115,6 +115,8 @@ for (const scenario of [
     if (name === "next/navigation") return { useRouter: () => ({ push() {} }) };
     if (name === "next/dynamic") return { default: loader =>
       String(loader).includes("MeetStage") ? MockMeetStage : Empty };
+    if (name === "@/hooks/useSalesCallPlan") return { useSalesCallPlan: () => ({products:[],choose(){},stage:"hook",setStage(){},status:"Saved",ready:true,improvement:"",retry(){},scriptRef:{current:{products:[],stage:"hook"}}}) };
+    if (name === "@/lib/sales-call-script") return { isSpokenObjection: () => false };
     if (name === "@/lib/crm") return { crmFetch, crmConfirmationError: () => new Error("Not confirmed") };
     if (name === "@/lib/call-prep-refresh") return { refreshCallPrepContext };
     if (name === "@/lib/call-capture-lifecycle") return { captureElapsedSeconds };
@@ -146,6 +148,10 @@ for (const scenario of [
   };
   try {
     await act(async () => root.render(React.createElement(module.exports.default)));
+    if (scenario === "existing-live") {
+      assert.ok(button("Exit full screen"), "Recovered live call automatically expands suggestions");
+      await click(button("Exit full screen"));
+    }
     const dock = document.querySelector('[aria-label="Call actions"]');
     assert.ok(dock, `${scenario} has visible call actions without requiring focus`);
     const live = button("Live", document.querySelector("nav"));
@@ -194,6 +200,8 @@ for (const scenario of [
         assert.equal(opened.length, 0);
         assert.equal(botRequests.length, 0);
       } else {
+        assert.ok(button("Exit full screen"), "Starting automatically expands suggestions");
+        await click(button("Exit full screen"));
         assert.match(document.querySelector('[aria-label="Call actions"]').textContent, /Call live/);
         assert.equal(opened.length, scenario === "new-call" ? 0 : 1);
         if (scenario !== "new-call") {

@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { requireRequestScope } from "@/lib/request-scope";
+import { crmBlockerPayload } from "@/lib/crm-blocker";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -9,22 +11,28 @@ export const dynamic = "force-dynamic";
 // for all calls is in one place, no need to open each call.
 export async function GET() {
   try {
+    const scope = requireRequestScope();
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const [{ data: summaries }, { data: companies }, { data: coachable }] =
+    const results =
       await Promise.all([
         supabaseAdmin
           .from("interview_summaries")
           .select("id, candidate, company_id, created_at, session_id, summary")
+          .eq("workspace_id", scope.workspaceId)
+          .eq("owner_id", scope.userId)
           .gte("created_at", sevenDaysAgo)
           .order("created_at", { ascending: false })
           .limit(30),
-        supabaseAdmin.from("companies").select("id, name"),
+        supabaseAdmin.from("companies").select("id, name").eq("workspace_id", scope.workspaceId).eq("owner_id", scope.userId),
         supabaseAdmin
           .from("interview_sessions")
           .select("session_id")
+          .eq("workspace_id", scope.workspaceId).eq("owner_id", scope.userId)
           .not("transcript", "is", null),
       ]);
 
+    for (const result of results) if (result.error) throw result.error;
+    const [{ data: summaries }, { data: companies }, { data: coachable }] = results;
     const nameById = new Map<string, string>();
     for (const c of companies || []) nameById.set(c.id, c.name);
     const coachableSet = new Set(
@@ -48,11 +56,13 @@ export async function GET() {
     const sessionIds = calls.map((s: any) => s.session_id);
     const pointsBySession = new Map<string, any[]>();
     if (sessionIds.length) {
-      const { data: points } = await supabaseAdmin
+      const { data: points, error: pointsError } = await supabaseAdmin
         .from("coaching_points")
         .select("id, session_id, quote, better, why, vote, created_at")
+        .eq("workspace_id", scope.workspaceId).eq("owner_id", scope.userId)
         .in("session_id", sessionIds)
         .order("created_at", { ascending: true });
+      if (pointsError) throw pointsError;
       for (const p of points || []) {
         const arr = pointsBySession.get((p as any).session_id) || [];
         arr.push(p);
@@ -98,8 +108,8 @@ export async function GET() {
       done: items.filter((i: any) => i.status === "done").length,
     };
 
-    return NextResponse.json({ calls: items, counts });
+    return NextResponse.json({ calls: items, counts }, { headers: {"Cache-Control":"private, no-store"} });
   } catch (err: any) {
-    return NextResponse.json({ calls: [], error: err?.message || "failed" });
+    return NextResponse.json(crmBlockerPayload({code:"speaking_coaching_load",title:"Speaking coaching unavailable",reason:"Your saved coaching could not be loaded",nextAction:"Keep your current notes and reopen Call Coaching",responsible:"system"}),{status:500});
   }
 }

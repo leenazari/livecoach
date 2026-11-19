@@ -1,271 +1,313 @@
 "use client";
-
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { crmFetch } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
-import MatrixRain from "@/components/MatrixRain";
-
-type Point = {
-  id: string;
-  quote: string;
-  better: string;
-  why: string;
-  vote: number;
-};
-type CallCoach = {
+import ScriptCoachingReport from "@/components/ScriptCoachingReport";
+import type { ScriptCoachingReport as Report } from "@/lib/script-coaching-report";
+type Call = {
   callId: string;
-  candidate: string | null;
-  company: string | null;
-  created_at: string;
+  sessionId: string;
+  ownerId: string;
+  ownerName: string;
   title: string;
-  status: "todo" | "review" | "done";
-  points: Point[];
+  createdAt: string;
+  state: string;
+  report: Report | null;
+  ownerNote: string | null;
 };
-
-const fmt = (iso: string) => {
-  try {
-    return new Date(iso).toLocaleString("en-GB", {
-      timeZone: "Europe/London",
-      day: "2-digit",
-      month: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return "";
-  }
+type Data = {
+  calls: Call[];
+  team: { id: string; name: string }[];
+  ownerView: boolean;
+  limited: boolean;
+  total: number;
+  weekly: {
+    totalCalls: number;
+    analysedCalls: number;
+    awaitingCoaching: number;
+    repeatedGaps: {
+      stage: string;
+      occurrences: number;
+      acrossSalespeople: number;
+      reviewScript: boolean;
+    }[];
+    priorities: { callId: string; salesperson: string; focus: string }[];
+  };
 };
-
 export default function CallCoachPage() {
-  const [calls, setCalls] = useState<CallCoach[]>([]);
-  const [counts, setCounts] = useState({ todo: 0, review: 0, done: 0 });
-  const [loaded, setLoaded] = useState(false);
-  const [busy, setBusy] = useState<string>("");
-  const [showDone, setShowDone] = useState(false);
-
+  const [data, setData] = useState<Data | null>(null);
+  const [owner, setOwner] = useState("");
+  const [days, setDays] = useState("7");
+  const [busy, setBusy] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [version, setVersion] = useState(0);
+  const [notes, setNotes] = useState<Record<string, string>>({});
   useEffect(() => {
-    crmFetch<{ calls: CallCoach[]; counts: any }>("/api/interview/coaching-queue")
-      .then((d) => {
-        setCalls(Array.isArray(d.calls) ? d.calls : []);
-        if (d.counts) setCounts(d.counts);
-      })
-      .catch(() => {})
-      .finally(() => setLoaded(true));
-  }, []);
-
-  const recompute = (cs: CallCoach[]) =>
-    setCounts({
-      todo: cs.filter((c) => c.status === "todo").length,
-      review: cs.filter((c) => c.status === "review").length,
-      done: cs.filter((c) => c.status === "done").length,
-    });
-
-  const statusOf = (points: Point[]): CallCoach["status"] =>
-    points.length === 0
-      ? "todo"
-      : points.some((p) => !p.vote)
-      ? "review"
-      : "done";
-
-  const generate = (callId: string) => {
-    if (busy) return;
-    setBusy(callId);
-    crmFetch<{ points: Point[] }>("/api/interview/coaching-debrief", {
-      method: "POST",
-      body: JSON.stringify({ callId }),
-    })
-      .then((d) => {
-        const points = Array.isArray(d.points) ? d.points : [];
-        setCalls((prev) => {
-          const next = prev.map((c) =>
-            c.callId === callId ? { ...c, points, status: statusOf(points) } : c
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    crmFetch<Data>(
+      `/api/crm/call-coaching?${new URLSearchParams({ days, ...(owner ? { owner } : {}) })}`,
+    )
+      .then((v) => {
+        if (!cancelled) {
+          setData(v);
+          setNotes(
+            Object.fromEntries(
+              v.calls.map((c) => [c.callId, c.ownerNote || ""]),
+            ),
           );
-          recompute(next);
-          return next;
-        });
+        }
       })
-      .catch(() => {})
-      .finally(() => setBusy(""));
-  };
-
-  const vote = (callId: string, pointId: string, v: number) => {
-    setCalls((prev) => {
-      const next = prev.map((c) => {
-        if (c.callId !== callId) return c;
-        const points = c.points.map((p) =>
-          p.id === pointId ? { ...p, vote: p.vote === v ? 0 : v } : p
-        );
-        return { ...c, points, status: statusOf(points) };
+      .catch((e) => {
+        if (!cancelled) setError(e.message || "Coaching could not load");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
       });
-      recompute(next);
-      return next;
-    });
-    const cur = calls
-      .find((c) => c.callId === callId)
-      ?.points.find((p) => p.id === pointId)?.vote;
-    const nextVote = cur === v ? 0 : v;
-    crmFetch("/api/interview/coaching-vote", {
-      method: "POST",
-      body: JSON.stringify({ id: pointId, vote: nextVote }),
-    }).catch(() => {});
-  };
-
-  const visible = calls.filter((c) => showDone || c.status !== "done");
-  const badge = (st: CallCoach["status"]) =>
-    st === "todo"
-      ? { label: "to do", cls: "border-amber/60 bg-amber/15 text-amber" }
-      : st === "review"
-      ? { label: "review", cls: "border-sky/60 bg-sky/15 text-sky" }
-      : { label: "done", cls: "border-sage/50 bg-sage/10 text-sage" };
-
+    return () => {
+      cancelled = true;
+    };
+  }, [owner, days, version]);
+  async function generate(call: Call) {
+    setBusy(call.callId);
+    setError("");
+    try {
+      const v = await crmFetch<{ ok: boolean; report: Report }>(
+        "/api/crm/call-coaching",
+        { method: "POST", body: JSON.stringify({ callId: call.callId }) },
+      );
+      if (!v.ok) throw new Error("The coaching result was not confirmed");
+      setVersion((v) => v + 1);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Coaching not confirmed");
+    } finally {
+      setBusy("");
+    }
+  }
+  async function correct(call: Call) {
+    setBusy(call.callId);
+    try {
+      const v = await crmFetch<{ ok: boolean }>("/api/crm/call-coaching", {
+        method: "PATCH",
+        body: JSON.stringify({
+          callId: call.callId,
+          note: notes[call.callId] || "",
+        }),
+      });
+      if (!v.ok) throw new Error("The correction was not confirmed");
+      setVersion((v) => v + 1);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Correction not confirmed");
+    } finally {
+      setBusy("");
+    }
+  }
+  function exportReport() {
+    if (!data) return;
+    const content = [
+      `LiveCoach ${days === "all" ? "all calls" : days + "-day"} sales coaching report`,
+      `${owner ? data.team.find((t) => t.id === owner)?.name : "Selected calls"}`,
+      `${data.weekly.analysedCalls} analysed / ${data.weekly.totalCalls} calls; ${data.weekly.awaitingCoaching} awaiting coaching`,
+      ...data.calls.map(
+        (c) =>
+          `\n${c.ownerName} | ${c.title} | ${new Date(c.createdAt).toLocaleString("en-GB")}\n${c.report ? [c.report.headline, c.report.intentOutcome, `Script coverage: ${c.report.score == null ? "Not scored" : c.report.score + "%"}`, `What worked:\n${c.report.strengths.map((s) => "- " + s).join("\n")}`, `Improve next time:\n${c.report.improvements.map((s) => "- " + s).join("\n")}`, `Next-call priority: ${c.report.nextCallFocus}`, `Product changes: ${c.report.switchReview}`, ...c.report.criteria.map((c) => `${c.stageId}: ${c.status}\n${c.explanation}\n${c.evidenceQuote ? "Evidence: " + c.evidenceQuote : ""}\n${c.betterNextTime}`)].join("\n\n") : "Coaching not requested"}\nOwner review: ${c.ownerNote || "none"}`,
+      ),
+    ].join("\n");
+    const url = URL.createObjectURL(
+      new Blob([content], { type: "text/plain;charset=utf-8" }),
+    );
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `LiveCoach_Coaching_${new Date().toISOString().slice(0, 10)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
   return (
-    <main className="relative z-10 mx-auto max-w-[820px] px-5 py-10">
-      <header className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-edge pb-3">
-        <h1 className="font-display text-[1.4rem] leading-none tracking-tight text-bone">
-          <span className="italic text-amber">Live</span>Coach{" "}
-          <span className="font-mono text-[0.7rem] uppercase tracking-[0.2em] text-muted">
-            / call coach
-          </span>
-        </h1>
-        <div className="flex items-center gap-2 font-mono text-[0.56rem] uppercase tracking-wider">
-          <span className="rounded-full border border-amber/50 bg-amber/10 px-2 py-0.5 text-amber">
-            {counts.todo} to do
-          </span>
-          <span className="rounded-full border border-sky/40 bg-sky/10 px-2 py-0.5 text-sky">
-            {counts.review} in review
-          </span>
-        </div>
-      </header>
-
-      <p className="mb-4 font-sans text-[0.84rem] leading-snug text-bone/70">
-        Your most important coaching from the last seven days. It checks the
-        intent and priority focus, missed decisions and follow-ups, and—in sales
-        calls—opportunities to qualify, advance or close the deal. Thumb each
-        tip up or down so the coach learns what helps you.
-      </p>
-
-      {!loaded ? (
-        <MatrixRain size="panel" messages={["loading your call coaching"]} />
-      ) : visible.length === 0 ? (
-        <p className="font-mono text-[0.66rem] text-muted">
-          {calls.length === 0
-            ? "No coachable calls in the last seven days."
-            : "All caught up. Nice."}
-        </p>
-      ) : (
-        <ul className="flex flex-col gap-3">
-          {visible.map((c) => {
-            const b = badge(c.status);
-            return (
-              <li
-                key={c.callId}
-                className="rounded-xl border border-edge bg-panel/40 p-4"
-              >
-                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <Link
-                      href={`/crm/calls/${c.callId}`}
-                      className="block truncate font-sans text-[0.95rem] text-bone hover:text-amber"
-                    >
-                      {c.title}
-                    </Link>
-                    <span className="font-mono text-[0.54rem] uppercase tracking-wider text-muted">
-                      {c.company ? `${c.company} · ` : ""}
-                      {fmt(c.created_at)}
-                    </span>
-                  </div>
-                  <span
-                    className={`flex-none rounded-full border px-2 py-0.5 font-mono text-[0.52rem] uppercase tracking-wider ${b.cls}`}
-                  >
-                    {b.label}
-                  </span>
-                </div>
-
-                {c.points.length === 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => generate(c.callId)}
-                    disabled={!!busy}
-                    className="rounded-full border border-sky/60 bg-sky/15 px-4 py-1.5 font-mono text-[0.56rem] uppercase tracking-wider text-sky transition hover:bg-sky/25 disabled:opacity-40"
-                  >
-                    {busy === c.callId ? "coaching…" : "Generate coaching"}
-                  </button>
-                ) : (
-                  <ul className="flex flex-col gap-2.5">
-                    {c.points.map((p) => (
-                      <li
-                        key={p.id}
-                        className="rounded-lg border border-edge bg-ink/40 p-3"
-                      >
-                        {p.quote && (
-                          <p className="font-sans text-[0.78rem] italic leading-snug text-muted">
-                            {"“"}
-                            {p.quote}
-                            {"”"}
-                          </p>
-                        )}
-                        <p className="mt-1.5 font-sans text-[0.85rem] leading-snug text-bone">
-                          <span className="font-mono text-[0.52rem] uppercase tracking-wider text-sage">
-                            try{" "}
-                          </span>
-                          {p.better}
-                        </p>
-                        <div className="mt-1.5 flex items-center justify-between gap-2">
-                          {p.why ? (
-                            <span className="font-mono text-[0.54rem] uppercase tracking-wider text-muted">
-                              {p.why}
-                            </span>
-                          ) : (
-                            <span />
-                          )}
-                          <span className="flex flex-none items-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() => vote(c.callId, p.id, 1)}
-                              title="useful"
-                              className={`rounded-full border px-2 py-0.5 font-mono text-[0.68rem] transition ${
-                                p.vote === 1
-                                  ? "border-sage bg-sage/20 text-sage"
-                                  : "border-edge text-muted hover:text-sage"
-                              }`}
-                            >
-                              {"↑"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => vote(c.callId, p.id, -1)}
-                              title="not useful"
-                              className={`rounded-full border px-2 py-0.5 font-mono text-[0.68rem] transition ${
-                                p.vote === -1
-                                  ? "border-rust bg-rust/20 text-rust"
-                                  : "border-edge text-muted hover:text-rust"
-                              }`}
-                            >
-                              {"↓"}
-                            </button>
-                          </span>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
-
-      {counts.done > 0 && (
+    <main className="mx-auto max-w-5xl px-5 py-8 text-bone">
+      <header className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-edge pb-4">
+        <h1 className="text-2xl">Call Coaching</h1>
         <button
           type="button"
-          onClick={() => setShowDone((v) => !v)}
-          className="mt-4 font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:text-bone"
+          onClick={exportReport}
+          disabled={!data || loading}
+          className="rounded-full border border-sky px-4 py-2 text-sm text-sky"
         >
-          {showDone ? "hide" : "show"} {counts.done} done
+          Export coaching report
         </button>
+      </header>
+      <Link
+        href="/crm/call-coach/speaking"
+        className="mb-3 inline-block text-sm text-sky underline"
+      >
+        Earlier speaking coaching and ratings
+      </Link>
+      <p className="mb-4 text-sm text-muted">
+        Get personal feedback when you are ready. Saved reports reopen without
+        running another analysis.
+      </p>
+      <div className="mb-5 flex flex-wrap items-center gap-3">
+        <label className="text-sm">
+          Period{" "}
+          <select
+            value={days}
+            onChange={(e) => setDays(e.target.value)}
+            className="ml-2 rounded-lg border border-edge bg-panel p-2"
+          >
+            <option value="7">Last 7 days</option>
+            <option value="30">Last 30 days</option>
+            <option value="all">All saved calls</option>
+          </select>
+        </label>
+        {data?.ownerView && (
+          <label className="text-sm">
+            Sales reports{" "}
+            <select
+              aria-label="Salesperson coaching reports"
+              value={owner}
+              onChange={(e) => setOwner(e.target.value)}
+              className="ml-2 rounded-lg border border-edge bg-panel p-2"
+            >
+              <option value="">All team coaching</option>
+              {data.team.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}’s reports
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <button
+          type="button"
+          onClick={() => setVersion((v) => v + 1)}
+          className="text-sm text-sky underline"
+        >
+          Refresh reports
+        </button>
+      </div>
+      {error && (
+        <p
+          role="alert"
+          className="my-4 rounded-lg border border-rust/40 p-3 text-rust"
+        >
+          {error}
+        </p>
       )}
-
+      {loading ? (
+        <p role="status">Loading saved coaching…</p>
+      ) : (
+        <>
+          {data && (
+            <section className="mb-6 rounded-xl border border-edge bg-panel p-4">
+              <h2 className="text-lg">
+                {owner ? data.team.find((t) => t.id === owner)?.name : "Weekly"}{" "}
+                coaching review
+              </h2>
+              <p className="mt-2 text-sm text-muted">
+                {data.weekly.analysedCalls} analysed ·{" "}
+                {data.weekly.awaitingCoaching} awaiting coaching ·{" "}
+                {data.weekly.totalCalls} calls in this view
+              </p>
+              {data.limited && (
+                <p className="mt-2 text-amber">
+                  Showing the latest 1,000 of {data.total} records. Select a
+                  salesperson to narrow the review.
+                </p>
+              )}
+              {data.weekly.repeatedGaps.map((g) => (
+                <p key={g.stage} className="mt-3 text-sm">
+                  {g.stage.replaceAll("_", " ")}: {g.occurrences} areas to
+                  improve.
+                  {g.reviewScript
+                    ? " Both salespeople are encountering this gap: review the script as well as individual execution."
+                    : ""}
+                </p>
+              ))}
+              {data.weekly.priorities.slice(0, 5).map((p) => (
+                <p key={p.callId} className="mt-2 text-sm text-sage">
+                  {p.salesperson}: {p.focus}
+                </p>
+              ))}
+            </section>
+          )}
+          {data?.calls.length === 0 && <p>No calls in this period.</p>}
+          <div className="space-y-4">
+            {data?.calls.map((call) => (
+              <article
+                key={call.callId}
+                className="rounded-xl border border-edge bg-panel p-5"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs text-muted">
+                      {call.ownerName} ·{" "}
+                      {new Date(call.createdAt).toLocaleString("en-GB")}
+                    </p>
+                    <h2 className="mt-1 text-lg">{call.title}</h2>
+                    <a
+                      className="text-xs text-sky underline"
+                      href={`/api/crm/call-coaching?transcript=1&callId=${call.callId}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open transcript
+                    </a>
+                  </div>
+                  {!call.report && (
+                    <button
+                      type="button"
+                      disabled={!!busy || call.state === "generating"}
+                      onClick={() => generate(call)}
+                      className="min-h-11 rounded-full bg-sky px-5 py-2 text-sm font-medium text-ink disabled:opacity-50"
+                    >
+                      {busy === call.callId || call.state === "generating"
+                        ? "Analysing…"
+                        : "Get coaching"}
+                    </button>
+                  )}
+                </div>
+                {call.report && (
+                  <ScriptCoachingReport
+                    report={call.report}
+                    sessionId={call.sessionId}
+                    callId={call.callId}
+                    ownerNote={call.ownerNote}
+                  />
+                )}{" "}
+                {data.ownerView && call.report && (
+                  <div className="mt-4 border-t border-edge pt-3">
+                    <label className="block text-sm">
+                      Owner review or correction
+                      <textarea
+                        value={notes[call.callId] || ""}
+                        maxLength={4000}
+                        onChange={(e) =>
+                          setNotes((n) => ({
+                            ...n,
+                            [call.callId]: e.target.value,
+                          }))
+                        }
+                        rows={2}
+                        className="mt-2 w-full rounded-lg border border-edge bg-ink p-2"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      disabled={!!busy}
+                      onClick={() => correct(call)}
+                      className="mt-2 text-sm text-sky underline"
+                    >
+                      Save owner review
+                    </button>
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
+        </>
+      )}
       <NavMenu />
     </main>
   );

@@ -1,3 +1,4 @@
+import { scriptContext } from "@/lib/sales-call-script";
 import { NextRequest } from "next/server";
 import {
   isTransientOpenAIError,
@@ -28,6 +29,8 @@ export async function POST(req: NextRequest) {
       privateNotes,
       playbook,
       planBrief,
+      salesProducts,
+      scriptStage,
     } = await req.json();
 
     if (!transcript || typeof transcript !== "string") {
@@ -102,7 +105,9 @@ Output ONLY one of:
 
 LEAN TOWARD OFFERING - the host WANTS ideas flowing, especially while brainstorming. Give one whenever there is a genuinely useful point, example, analogy, or framing to add - you do not need a profound moment, just something that helps. Only HOLD when it is pure logistics or small talk with nothing to build on, OR when anything you would say would be inaccurate or a repeat. Accuracy still wins: NEVER fabricate to fill the silence, and never repeat or reword anything in the RECENT INSIGHTS list.`;
 
+    const approvedProductContext = scriptContext(salesProducts, scriptStage);
     const system: any[] = [
+      ...(approvedProductContext ? [{ type: "text", text: `${approvedProductContext}\nFor a product-focused call, your primary job is a short, personalised script cue or objection response. This overrides the generic brainstorming and notable-quote guidance. For an objection, offer one calm response and, if useful, a clarifying question, within 40 words. Return HOLD if the concern is already answered. Keep the output marker format.` }] : []),
       { type: "text", text: instructions },
       ...(planBlock
         ? [

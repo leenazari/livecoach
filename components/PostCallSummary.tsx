@@ -1,4 +1,5 @@
 "use client";
+import GetCallCoaching from "@/components/GetCallCoaching";
 
 import { useEffect, useRef, useState } from "react";
 import { crmFetch } from "@/lib/crm";
@@ -832,6 +833,7 @@ export default function PostCallSummary({
             )
           )}
 
+          {sessionId && <GetCallCoaching sessionId={sessionId} />}
           <CallNotes sessionId={sessionId} initial={view.userNotes || ""} />
 
           {view.contributors && view.contributors.length > 0 && (
