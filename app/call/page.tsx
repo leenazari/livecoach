@@ -16,6 +16,9 @@ import GlobalAssistant from "@/components/crm/GlobalAssistant";
 import NavMenu from "@/components/crm/NavMenu";
 import CallActionDock from "@/components/crm/CallActionDock";
 import LiveFocusPanel from "@/components/LiveFocusPanel";
+import SalesScriptPanel from "@/components/SalesScriptPanel";
+import { useSalesCallPlan } from "@/hooks/useSalesCallPlan";
+import { isSpokenObjection } from "@/lib/sales-call-script";
 import { validateRequestedFocus } from "@/lib/live-focus-cue";
 import { consumeArmedCallLaunch } from "@/lib/call-launch";
 import { browserMeetingLaunchUrl } from "@/lib/meeting-account";
@@ -1098,6 +1101,8 @@ export default function CallPage() {
       }
       if (prep.pitchKit && typeof prep.pitchKit === "object")
         setPitchKit(prep.pitchKit);
+      if (prep.battlecard && typeof prep.battlecard === "object") setBattlecard(prep.battlecard);
+      if (typeof prep.clientEmailCtx === "string") { setClientEmailCtx(prep.clientEmailCtx); clientEmailCtxRef.current = prep.clientEmailCtx; }
       if (prep.salesScript && typeof prep.salesScript === "object")
         setSalesScript(prep.salesScript);
       if (Array.isArray(prep.privateNotes)) {
@@ -1129,6 +1134,26 @@ export default function CallPage() {
       /* ignore a malformed snapshot */
     }
   }, []);
+
+  const salesPlan = useSalesCallPlan({
+    room, companyId: linkedCompany?.id || null, upcomingId, live: callLive, ended,
+    ready: !intentLoading,
+    prep: { brief, role, callType, candidate, character, suggestedComps, selectedComps, goals, privateNotes, playbook, pitchKit, salesScript, battlecard, planStage, clientEmailCtx },
+    transcript: lines.map(l => `${lineSpeakerLabel(l, "Candidate")}: ${l.text}`).join("\n"),
+    hydrate: hydrateFromPrep,
+  });
+  const expandedSalesSessionRef = useRef("");
+  useEffect(() => {
+    if (callLive && lines.length > 0 && expandedSalesSessionRef.current !== room) {
+      expandedSalesSessionRef.current = room;
+      setCueFull(true);
+    }
+  }, [callLive, lines.length, room]);
+  const productScriptPanel = (live = false) => <SalesScriptPanel
+    products={salesPlan.products} onChange={salesPlan.choose} stage={salesPlan.stage}
+    onStage={salesPlan.setStage} status={salesPlan.status} ready={salesPlan.ready}
+    improvement={salesPlan.improvement} onRetry={salesPlan.retry} live={live}
+  />;
 
   const confirmMeetingLead = useCallback(async (email: string) => {
     const callId = upcomingIdRef.current;
@@ -1747,7 +1772,7 @@ export default function CallPage() {
         signal: controller.signal,
         body: JSON.stringify({
           knowledgeContext: knowledgeRef.current,
-          transcript: labelled.slice(-2400),
+          transcript: labelled.slice(-16000),
           latest,
           latestSpeaker,
           subjectName: candidateRef.current || null,
@@ -1763,6 +1788,8 @@ export default function CallPage() {
           privateNotes: privateNotesRef.current,
           playbook: playbookRef.current,
           planBrief: planBriefRef.current,
+          salesProducts: salesPlan.scriptRef.current.products,
+          scriptStage: salesPlan.scriptRef.current.stage,
           allowHold: !force && !focus,
           ...(focus ? {
             requestedFocus: focus,
@@ -1961,7 +1988,7 @@ export default function CallPage() {
     const labelled = lines
       .map((l) => `${lineSpeakerLabel(l, personLabelRef.current)}: ${l.text}`)
       .join("\n")
-      .slice(-3000);
+      .slice(-16000);
     if (!labelled.trim()) return;
 
     insightInFlightRef.current = true;
@@ -2002,6 +2029,8 @@ export default function CallPage() {
           privateNotes: privateNotesRef.current,
           playbook: playbookRef.current,
           planBrief: planBriefRef.current,
+          salesProducts: salesPlan.scriptRef.current.products,
+          scriptStage: salesPlan.scriptRef.current.stage,
         }),
       });
       addUsageToRef(aiUsdRef, res);
@@ -2044,11 +2073,17 @@ export default function CallPage() {
   // Fires on every candidate turn-end: always request a live cue, and update
   // the running summary on a LIGHT cadence (first turn, then every 2nd) so we
   // don't triple the live model load.
+  const lastObjectionCueAtRef = useRef(0);
   const handleCandidateTurnEnd = useCallback(() => {
     // Pace the cues to the user's chosen speed (fast 9s / medium 30s / slow
     // 60s). You can also tap "Cue me" for one on demand. Rapid turns coalesce
     // into a single, well-timed cue built from the latest context.
     if (!coachingPausedRef.current) {
+      const latestProspect = [...linesRef.current].reverse().find(line => line.role === "candidate");
+      if (salesPlan.scriptRef.current.products.length && latestProspect && isSpokenObjection(latestProspect.text) && Date.now() - lastObjectionCueAtRef.current >= 8000) {
+        lastObjectionCueAtRef.current = Date.now();
+        void requestInsight();
+      }
       const MIN_CUE_GAP_MS = cueGapMsRef.current;
       const now = Date.now();
       const since = now - lastCueAtRef.current;
@@ -2072,7 +2107,7 @@ export default function CallPage() {
       turnsSinceSummaryRef.current = 0;
       updateRunningSummary();
     }
-  }, [requestLiveSuggestion, updateRunningSummary]);
+  }, [requestLiveSuggestion, updateRunningSummary, requestInsight]);
 
   // Changing the interview focus mid-call should re-cue immediately against the
   // conversation so far - so the new focus is reflected right where we are now,
@@ -2534,6 +2569,7 @@ export default function CallPage() {
     }
     setExpandSetup(false);
     setCallLive(true);
+    setCueFull(true);
     // An automatically scheduled capture already has its canonical session and
     // saved focus. Resuming must neither send another bot nor overwrite that
     // context with an incompletely hydrated browser's blank fields.
@@ -3453,6 +3489,8 @@ export default function CallPage() {
           )}
         </div>
       </header>
+
+      {!cueFull && productScriptPanel(callLive)}
 
       {/* Only the pre-call brief requires a plan. Starting or returning to a
           live call is independent of focus, identity suggestions and AI prep. */}
@@ -5454,6 +5492,7 @@ export default function CallPage() {
             </button>
             </div>
           </div>
+          <div className="max-h-[40vh] overflow-y-auto px-4 sm:px-6">{productScriptPanel(true)}</div>
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
             <LiveFocusPanel
               focuses={suggestedComps}

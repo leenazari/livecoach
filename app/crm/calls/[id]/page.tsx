@@ -7,10 +7,12 @@ import { crmFetch } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
 import PostCallCompletionPackage from "@/components/crm/PostCallCompletionPackage";
 import { capitaliseSentenceStarts } from "@/lib/text";
+import GetCallCoaching from "@/components/GetCallCoaching";
 import MatrixRain from "@/components/MatrixRain";
 
 type Call = {
   id: string;
+  session_id?: string | null;
   candidate: string | null;
   role: string | null;
   company: string | null;
@@ -287,6 +289,7 @@ export default function CallDetailPage() {
             )}
           </div>
 
+          {call.session_id && <GetCallCoaching key={call.id} callId={call.id} sessionId={call.session_id} />}
           {call.company_id ? <PostCallCompletionPackage callId={call.id} /> : null}
 
           {/* Competencies */}

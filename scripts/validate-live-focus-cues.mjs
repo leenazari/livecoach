@@ -6,6 +6,7 @@ import { JSDOM } from 'jsdom';
 import ts from 'typescript';
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
+import { scriptContext } from '../lib/sales-call-script.ts';
 import { oneOffFocusPrompt, validateRequestedFocus } from '../lib/live-focus-cue.ts';
 
 const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -49,6 +50,7 @@ const ref = current => ({ current });
 const makeHost = name => {
   const state = { suggestions: [], focusCue: null, busy: false, requestingFocus: null, requests: [], response: 'What would a useful pilot prove? ||WHY|| clarifies your next step', delay: null, fail: false };
   const context = {
+    salesPlan: { scriptRef: ref({products:[],stage:'hook'}) },
     validateRequestedFocus, inFlightRef: ref(false), endRequestedRef: ref(false),
     suggestedCompsRef: ref(focuses), selectedCompsRef: ref(selected),
     linesRef: ref([{ role: 'candidate', speaker: 'Client', text: 'We need more reliable screening.' }, { role: 'interviewer', text: 'Could we discuss the next step?' }]),
@@ -169,6 +171,7 @@ const modelCalls = [];
 const api = load(read('app/api/interview/suggest/route.ts'), {
   '@/lib/request-scope': { getRequestScope: () => scopes.getStore() },
   '@/lib/live-focus-cue': { validateRequestedFocus, oneOffFocusPrompt },
+  '@/lib/sales-call-script': {scriptContext},
   '@/lib/workspace': { getTasteBlock: async () => `Taste for ${scopes.getStore().userId}` },
   '@/lib/sales-profile': { getSalesProfileContextBlock: async () => `Profile for ${scopes.getStore().userId}` },
   '@/lib/openai': { isTransientOpenAIError: () => false, OPENAI_MODEL_PRO: 'test-model', openai: { messages: { stream: async args => {
