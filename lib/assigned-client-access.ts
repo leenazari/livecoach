@@ -16,9 +16,10 @@ export type AssignedClientAccess = {
 // team lead cover for this ordinary sales company.
 export async function loadAssignedClientAccess(
   companyId: string,
-  scope: { userId: string; workspaceId: string }
+  scope: { userId: string; workspaceId: string },
+  client = supabaseAdmin
 ): Promise<AssignedClientAccess | null> {
-  const { data: owned, error: ownedError } = await supabaseAdmin
+  const { data: owned, error: ownedError } = await client
     .from("companies")
     .select("id,name,domain,website,sector,stage,owner_id,workspace_id")
     .eq("id", companyId)
@@ -31,7 +32,7 @@ export async function loadAssignedClientAccess(
   const coverCompany = await loadTeamLeadCoverCompany(companyId, scope);
   if (coverCompany) return { mode: "shared_sales", company: coverCompany, shareId: null };
 
-  const { data: share, error: shareError } = await supabaseAdmin
+  const { data: share, error: shareError } = await client
     .from("team_client_shares")
     .select("id,company_id")
     .eq("workspace_id", scope.workspaceId)

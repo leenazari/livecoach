@@ -53,28 +53,8 @@ async function postSummaryFollowups(
       })
     );
   }
-  if (payload.manualRecap && payload.companyId && payload.userNotes?.trim()) {
-    work.push(
-      post("/api/crm/extract-tasks", {
-        companyId: payload.companyId,
-        workstreamId: payload.workstreamId || null,
-        text: payload.userNotes,
-        clientName: payload.candidate || null,
-        source: "recap",
-      })
-    );
-  }
-  if (payload.companyId && payload.transcript.trim().length >= 30) {
-    work.push(
-      post("/api/crm/commitments/detect", {
-        companyId: payload.companyId,
-        workstreamId: payload.workstreamId || null,
-        text: payload.transcript,
-        clientName: payload.candidate || null,
-        source: payload.manualRecap ? "recap" : "call",
-      })
-    );
-  }
+  // The shared summary job now prepares and saves one canonical action pack.
+  // Do not race it with separate task/commitment extractors that discard drafts.
   if (!payload.manualRecap && payload.transcript.trim().length >= 200) {
     work.push(
       post("/api/interview/coaching-learn", {

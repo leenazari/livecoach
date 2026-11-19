@@ -584,6 +584,7 @@ Return the JSON assessment now.`;
     try {
       const { data: savedCall, error: savedCallError } = await supabaseAdmin.from("interview_summaries").insert({
         cache_key: cacheKey,
+        post_call_preparation_state: "pending",
         session_id: sessionId || null,
         candidate: candidate || null,
         role: role || null,
