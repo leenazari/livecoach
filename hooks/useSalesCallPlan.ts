@@ -13,6 +13,7 @@ type Options = {
   room: string;
   companyId: string | null;
   upcomingId: string | null;
+  workstreamId?: string | null;
   live: boolean;
   ended: boolean;
   ready: boolean;
@@ -24,7 +25,7 @@ export function useSalesCallPlan(options: Options) {
   const [scriptVersion, setScriptVersion] = useState(ADAM_SCRIPT.version);
   const scriptVersionRef = useRef(ADAM_SCRIPT.version);
   const [products, setProducts] = useState<SalesProduct[]>([]);
-  const [stage, setStage] = useState("hook");
+  const [stage, setStageState] = useState(ADAM_SCRIPT.steps[0].id);
   const [status, setStatus] = useState("Loading saved preparation…");
   const [ready, setReady] = useState(false);
   const [improvement, setImprovement] = useState("");
@@ -94,7 +95,7 @@ export function useSalesCallPlan(options: Options) {
             : { products: data.products, stage: seed?.stage, prep: seed?.prep };
         loadedContext.current = contextKey;
         setProducts(cleanProducts(choice.products));
-        setStage(cleanStage(choice.stage));
+        setStageState(cleanStage(choice.stage, revision));
         if (choice.prep && !latest.current.live)
           hydrateRef.current(choice.prep);
         setImprovement(
@@ -163,6 +164,8 @@ export function useSalesCallPlan(options: Options) {
               body: JSON.stringify({
                 key: contextKey,
                 companyId: info.companyId,
+                upcomingId: info.upcomingId,
+                workstreamId: info.workstreamId,
                 sessionId: info.live || info.ended ? info.room : null,
                 products: snapshot.products,
                 stage: snapshot.stage,
@@ -225,6 +228,11 @@ export function useSalesCallPlan(options: Options) {
     dirtyClient.current = true;
     scriptRef.current = { products: value, stage };
     setProducts(value);
+  };
+  const setStage = (value: string) => {
+    const next = cleanStage(value, scriptVersionRef.current);
+    scriptRef.current = { products, stage: next };
+    setStageState(next);
   };
   return {
     products,

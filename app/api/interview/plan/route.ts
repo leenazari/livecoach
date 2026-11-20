@@ -18,6 +18,7 @@ import {
   verifyFocusBuildTarget,
 } from "@/lib/call-focus-persistence";
 import { crmBlockerPayload } from "@/lib/crm-blocker";
+import { ADAM_PITCH_GENERATION, adamPitchContextKey, cleanProducts, normaliseAdamPitch } from "@/lib/sales-call-script";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -311,6 +312,7 @@ async function buildFocusOnly(input: {
   authoritativeName: string;
   nameRule: string;
   existingFocus: string[];
+  adamContextKey?: string;
 }) {
   const reconcile = input.existingFocus.length > 0;
   const deriveSystem = `${input.internalBlock}You are an expert conversation planner. From the INTENT brief and any supporting document, return ONLY this and nothing else:
@@ -337,7 +339,7 @@ CRITICAL - NO DUPLICATES: an addition must not overlap any existing focus OR ano
 
 Output ONLY valid JSON: { "additions": ["..."], "upgrades": [{"from":"...","to":"..."}], "callType":"...", "subjectName":"...", "character":"..." }`;
 
-  const system = reconcile ? reconcileSystem : deriveSystem;
+  const system = (reconcile ? reconcileSystem : deriveSystem) + (input.adamContextKey ? `\n\n${ADAM_PITCH_GENERATION}` : "");
   const user = `INTENT BRIEF (top priority): ${input.brief || "(none given)"}
 ROLE / TITLE: ${input.role || "(not specified)"}${input.nameRule}
 
@@ -350,7 +352,7 @@ Return the JSON now.`;
   try {
     const message = await callModelWithTimeout(system, user, 30000, {
       model: OPENAI_MODEL_PRO,
-      maxTokens: 1100,
+      maxTokens: input.adamContextKey ? 2200 : 1100,
     });
     usage = message.usage;
     raw = message.content
@@ -374,6 +376,8 @@ Return the JSON now.`;
   const character =
     typeof plan.character === "string" ? plan.character : "";
   const cost = callCostUSD("pro", usage);
+  const scriptResult = input.adamContextKey
+    ? { salesScript: normaliseAdamPitch(plan.salesScript, input.adamContextKey) } : {};
 
   if (reconcile) {
     const additions = Array.isArray(plan.additions)
@@ -409,6 +413,7 @@ Return the JSON now.`;
         focusOnly: true,
         reconcile: true,
         degraded: false,
+        ...scriptResult,
       },
     };
   }
@@ -430,6 +435,7 @@ Return the JSON now.`;
         character: fallback.character,
         focusOnly: true,
         degraded: true,
+        ...scriptResult,
       },
     };
   }
@@ -442,6 +448,7 @@ Return the JSON now.`;
       character,
       focusOnly: true,
       degraded: false,
+      ...scriptResult,
     },
   };
 }
@@ -451,6 +458,8 @@ export async function POST(req: NextRequest) {
   let role = "";
   try {
     const body = await req.json();
+    const adamSelected = cleanProducts(body.salesProducts).includes("adam");
+    const pitchContextKey = adamPitchContextKey(body);
     brief = typeof body.brief === "string" ? body.brief : "";
     role = typeof body.role === "string" ? body.role : "";
     const knowledgeContext = body.knowledgeContext;
@@ -503,6 +512,7 @@ export async function POST(req: NextRequest) {
           authoritativeName,
           nameRule,
           existingFocus,
+          ...(adamSelected ? { adamContextKey: adamPitchContextKey({ ...body, companyId: target ? target.company_id : body.companyId }) } : {}),
         });
         let persisted: Awaited<ReturnType<typeof persistFocusBuild>> | null = null;
         if (upcomingId && scope) {
@@ -766,7 +776,7 @@ Return the JSON plan now.`;
     // Both are generated in this same Terra pass, so adding the script does not
     // create another model call or reread historic transcripts.
     let pitchKit: any = null;
-    let salesScript: any = null;
+    let salesScript: any = adamSelected ? normaliseAdamPitch(null, pitchContextKey) : null;
     // Only attempt the Terra upgrade if there's real budget left; otherwise
     // keep the Luna playbook. This is what stops the 60s overrun.
     try {
@@ -786,14 +796,14 @@ Return the JSON plan now.`;
    - "objections": 0-4 likely objections from this buyer, each {"objection":"...","response":"a warm one-line way to handle it"}.
    Ground everything in the context. Never invent numbers, proofs, names or claims.
 
-3) "salesScript": ONLY for a SALES, PITCH, DEMO or DISCOVERY call. Otherwise set it to null. This is not a speech to recite. It is the ordered route the caller can glance at, and the live coach will adapt it to what the buyer actually says:
+${adamSelected ? ADAM_PITCH_GENERATION : `3) "salesScript": ONLY for a SALES, PITCH, DEMO or DISCOVERY call. Otherwise set it to null. This is not a speech to recite. It is the ordered route the caller can glance at, and the live coach will adapt it to what the buyer actually says:
    - "steps": exactly 5 ordered stages: warm discovery, pain and impact, relevant fit, decision process, and agreed next step. Each is {"stage":"2-4 words","line":"one exact warm question or sentence the caller can say, maximum 18 words","listenFor":"the concrete signal to notice, maximum 12 words","nextMove":"what to ask or say if that signal appears, maximum 16 words"}.
    - "coachingReminders": 2-4 short reminders selected from THE USER'S DEVELOPMENT above. Choose only recurring sales habits that will materially improve THIS call. Do not invent a weakness if none is present.
-   The route must discover before pitching, connect each benefit to a need they actually reveal, and end with a proportionate commitment. Do not force a close when this is primarily a partnership or relationship conversation.
+   The route must discover before pitching, connect each benefit to a need they actually reveal, and end with a proportionate commitment. Do not force a close when this is primarily a partnership or relationship conversation.`}
 
 Output ONLY this JSON object, no prose, no markdown:
-{"playbook":[{"label":"...","detail":"..."}],"pitchKit":{"benefits":[{"benefit":"...","need":"..."}],"proofPoints":["..."],"differentiators":["..."],"mustMention":["..."],"objections":[{"objection":"...","response":"..."}]},"salesScript":{"steps":[{"stage":"...","line":"...","listenFor":"...","nextMove":"..."}],"coachingReminders":["..."]}}
-pitchKit and salesScript may be null.`,
+Use the keys playbook, pitchKit and salesScript with the structures above.
+${adamSelected ? "Always include the three-section Adam salesScript." : "pitchKit and salesScript may be null."}`,
         },
         {
           type: "text",
@@ -820,7 +830,7 @@ Return the JSON object (playbook + pitchKit + salesScript) now.`;
             // A tailored sales pitch kit can legitimately exceed 900 tokens.
             // The previous cap cut JSON mid-string, making the whole Terra
             // upgrade unparsable and silently falling back to Luna.
-            max_tokens: 1900,
+            max_tokens: adamSelected ? 2600 : 1900,
             temperature: 0.5,
             system: pbSystem,
             messages: [{ role: "user", content: pbUser }],
@@ -896,7 +906,9 @@ Return the JSON object (playbook + pitchKit + salesScript) now.`;
         }
         // The sales script is saved with the prep. Live coaching receives this
         // compact route instead of querying every old call on every cue.
-        if (callType === "sales" && obj.salesScript && typeof obj.salesScript === "object") {
+        if (adamSelected) {
+          salesScript = normaliseAdamPitch(obj.salesScript, pitchContextKey);
+        } else if (callType === "sales" && obj.salesScript && typeof obj.salesScript === "object") {
           const ss = obj.salesScript;
           const steps = Array.isArray(ss.steps)
             ? ss.steps
@@ -980,7 +992,7 @@ Return the JSON object (playbook + pitchKit + salesScript) now.`;
     if (focusAreas.length === 0) {
       const fb = buildFallback(brief, role, callType);
       return NextResponse.json(
-        { ...fb, degraded: true },
+        { ...fb, ...(adamSelected ? { salesScript } : {}), degraded: true },
         {
           headers: {
             "x-cost-usd": String(

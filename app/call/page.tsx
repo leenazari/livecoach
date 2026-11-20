@@ -19,7 +19,7 @@ import CallActionDock from "@/components/crm/CallActionDock";
 import LiveFocusPanel from "@/components/LiveFocusPanel";
 import SalesScriptPanel from "@/components/SalesScriptPanel";
 import { useSalesCallPlan } from "@/hooks/useSalesCallPlan";
-import { isSpokenObjection } from "@/lib/sales-call-script";
+import { isSpokenObjection, adamPitchContextKey, savedAdamPitch } from "@/lib/sales-call-script";
 import { validateRequestedFocus } from "@/lib/live-focus-cue";
 import { consumeArmedCallLaunch } from "@/lib/call-launch";
 import { browserMeetingLaunchUrl } from "@/lib/meeting-account";
@@ -92,8 +92,12 @@ type SalesScript = {
     line: string;
     listenFor?: string;
     nextMove?: string;
+    questions?: string[];
   }[];
   coachingReminders?: string[];
+  version?: string;
+  contextKey?: string;
+  personalised?: boolean;
 };
 
 // The pre-call battlecard built on the Prep tab: objections with the right
@@ -581,6 +585,8 @@ export default function CallPage() {
   const planBriefRef = useRef<string>("");
   // Latest email-context box value, so go-live can save it without stale state.
   const clientEmailCtxRef = useRef<string>("");
+  const adaptiveSalesScriptRef = useRef("");
+  const adamSalesScriptRef = useRef("");
   const linkedCompanyRef = useRef<{ id: string; name: string } | null>(null);
   const linkedWorkstreamRef = useRef<{
     id: string;
@@ -751,6 +757,13 @@ export default function CallPage() {
               : ""
           }`
         : "";
+    // A product-specific pitch must not become the generic script after the
+    // host switches away from that product.
+    adaptiveSalesScriptRef.current = salesScript?.version ? "" : script;
+    const adamPitch = savedAdamPitch(salesScript, adamPitchContextKey({ upcomingId, companyId: linkedCompany?.id, workstreamId: linkedWorkstream?.id }));
+    adamSalesScriptRef.current = adamPitch
+      ? `THIS CALL'S THREE-SECTION ADAM PROMPTS:\n${adamPitch.steps.map(step => `${step.stage}\n${step.questions.map((q, index) => `${index + 1}. ${q}`).join("\n")}`).join("\n")}`
+      : "";
     const obj =
       battlecard && Array.isArray(battlecard.objections) && battlecard.objections.length
         ? "PREPARED OBJECTION RESPONSES (if the discussion raises one of these objections, offer the prepared response, adapted to exactly what they said, as the thing to say):\n" +
@@ -762,7 +775,6 @@ export default function CallPage() {
     planBriefRef.current = [
       brief?.trim() ? `INTENT: ${brief.trim()}` : "",
       character?.trim() ? `YOUR READ: ${character.trim()}` : "",
-      script,
       pk,
       obj,
       clientEmailCtx?.trim()
@@ -771,7 +783,7 @@ export default function CallPage() {
     ]
       .filter(Boolean)
       .join("\n\n");
-  }, [brief, character, clientEmailCtx, pitchKit, salesScript, battlecard]);
+  }, [brief, character, clientEmailCtx, pitchKit, salesScript, battlecard, upcomingId, linkedCompany?.id, linkedWorkstream?.id]);
   useEffect(() => {
     linkedCompanyRef.current = linkedCompany;
   }, [linkedCompany]);
@@ -967,6 +979,7 @@ export default function CallPage() {
   const handleLinkCompany = useCallback(
     (v: { id: string; name: string } | null) => {
       if (v?.id !== linkedCompanyRef.current?.id) {
+        setSalesScript(null);
         emailEditedRef.current = false;
         emailRefreshVersionRef.current += 1;
         clientEmailCtxRef.current = "";
@@ -992,6 +1005,7 @@ export default function CallPage() {
       emailRefreshVersionRef.current += 1;
       clientEmailCtxRef.current = "";
       setClientEmailCtx("");
+      setSalesScript(null);
       try {
         linkedWorkstreamRef.current = chosen;
         setLinkedWorkstream(chosen);
@@ -1138,6 +1152,7 @@ export default function CallPage() {
 
   const salesPlan = useSalesCallPlan({
     room, companyId: linkedCompany?.id || null, upcomingId, live: callLive, ended,
+    workstreamId: linkedWorkstream?.id || null,
     ready: !intentLoading,
     prep: { brief, role, callType, candidate, character, suggestedComps, selectedComps, goals, privateNotes, playbook, pitchKit, salesScript, battlecard, planStage, clientEmailCtx },
     transcript: lines.map(l => `${lineSpeakerLabel(l, "Candidate")}: ${l.text}`).join("\n"),
@@ -1154,6 +1169,9 @@ export default function CallPage() {
     scriptVersion={salesPlan.scriptVersion} products={salesPlan.products} onChange={salesPlan.choose} stage={salesPlan.stage}
     onStage={salesPlan.setStage} status={salesPlan.status} ready={salesPlan.ready}
     improvement={salesPlan.improvement} onRetry={salesPlan.retry} live={live}
+    pitch={salesScript} contextKey={adamPitchContextKey({ upcomingId, companyId: linkedCompany?.id, workstreamId: linkedWorkstream?.id })}
+    preparing={prepping || intentLoading || callEntryState !== "ready"}
+    onPrepare={() => void prep(suggestedComps.length ? "refocus" : "focus")}
   />;
 
   const confirmMeetingLead = useCallback(async (email: string) => {
@@ -1788,7 +1806,7 @@ export default function CallPage() {
           goals: goalsRef.current.map((g) => g.text),
           privateNotes: privateNotesRef.current,
           playbook: playbookRef.current,
-          planBrief: planBriefRef.current,
+          planBrief: [planBriefRef.current, salesPlan.scriptRef.current.products.includes("adam") ? adamSalesScriptRef.current : adaptiveSalesScriptRef.current].filter(Boolean).join("\n\n"),
           salesProducts: salesPlan.scriptRef.current.products,
           scriptStage: salesPlan.scriptRef.current.stage,
           scriptVersion: salesPlan.scriptVersionRef?.current,
@@ -2030,7 +2048,7 @@ export default function CallPage() {
           goals: goalsRef.current.map((g) => g.text),
           privateNotes: privateNotesRef.current,
           playbook: playbookRef.current,
-          planBrief: planBriefRef.current,
+          planBrief: [planBriefRef.current, salesPlan.scriptRef.current.products.includes("adam") ? adamSalesScriptRef.current : adaptiveSalesScriptRef.current].filter(Boolean).join("\n\n"),
           salesProducts: salesPlan.scriptRef.current.products,
           scriptStage: salesPlan.scriptRef.current.stage,
           scriptVersion: salesPlan.scriptVersionRef?.current,
@@ -2177,6 +2195,7 @@ export default function CallPage() {
     const planBody = JSON.stringify({
         brief: planIntent || null,
         role: role || null,
+        salesProducts: salesPlan.scriptRef.current.products,
         // The linked client, so the planner can tell an INTERNAL board/strategy
         // call (people named in the brief are the topic) from a client call.
         companyId: linkedCompanyRef.current?.id || null,
@@ -2395,9 +2414,9 @@ export default function CallPage() {
       setCandidate(data.subjectName.trim());
     }
 
+    if (data.salesScript || mode === "full") setSalesScript(data.salesScript || null);
     if (mode === "full") {
       setPitchKit(data.pitchKit || null);
-      setSalesScript(data.salesScript || null);
       setPlaybook(
         Array.isArray(data.playbook)
           ? data.playbook.filter(
@@ -4462,7 +4481,7 @@ export default function CallPage() {
                     </ul>
                   </div>
                 )}
-                {salesScript && salesScript.steps.length > 0 && (
+                {!salesPlan.products.includes("adam") && salesScript && !salesScript.version && salesScript.steps.length > 0 && (
                   <div className="rounded-xl border border-sage/40 bg-sage/[0.06] p-3.5">
                     <p className="mb-1 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-sage">
                       Adaptive sales script

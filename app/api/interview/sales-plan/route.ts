@@ -5,6 +5,8 @@ import { loadAssignedClientAccess } from "@/lib/assigned-client-access";
 import { crmBlockerPayload } from "@/lib/crm-blocker";
 import {
   ADAM_SCRIPT,
+  adamPitchContextKey,
+  savedAdamPitch,
   cleanProducts,
   cleanStage,
   nextTimeline,
@@ -35,6 +37,7 @@ function key(value: unknown) {
 export async function GET(req: NextRequest) {
   try {
     const scope = requireRequestScope();
+    if (scope.status !== "active") return fail(403, "Active workspace access is required to load call preparation");
     const contextKey = key(req.nextUrl.searchParams.get("key"));
     const companyId = req.nextUrl.searchParams.get("companyId");
     if (
@@ -109,6 +112,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const scope = requireRequestScope();
+    if (scope.status !== "active") return fail(403, "Active workspace access is required to save call preparation");
     const body = await req.json();
     const contextKey = key(body.key);
     const companyId = body.companyId || null;
@@ -135,7 +139,8 @@ export async function POST(req: NextRequest) {
         "This preparation changed in another tab. Reopen it to see the latest saved version",
       );
     const products = cleanProducts(body.products);
-    const stage = cleanStage(body.stage);
+    const scriptVersion = sessionId && previous?.script_snapshot?.version || ADAM_SCRIPT.version;
+    const stage = cleanStage(body.stage, scriptVersion);
     const prep =
       body.prep && typeof body.prep === "object" && !Array.isArray(body.prep)
         ? body.prep
@@ -162,6 +167,13 @@ export async function POST(req: NextRequest) {
         )
       : [];
     const now = new Date().toISOString();
+    const pitch = savedAdamPitch(prep.salesScript, adamPitchContextKey({
+      upcomingId: body.upcomingId, companyId, workstreamId: body.workstreamId,
+    }));
+    const currentScript = pitch ? {
+      ...ADAM_SCRIPT,
+      steps: ADAM_SCRIPT.steps.map(step => ({ ...step, questions: pitch.steps.find(item => item.id === step.id)!.questions })),
+    } : ADAM_SCRIPT;
     const row = {
       workspace_id: scope.workspaceId,
       owner_id: scope.userId,
@@ -174,7 +186,7 @@ export async function POST(req: NextRequest) {
       script_snapshot: sessionId && previous?.script_snapshot?.version
         ? previous.script_snapshot
         : products.includes("adam")
-          ? ADAM_SCRIPT
+          ? currentScript
           : {},
       timeline,
       updated_at: now,
