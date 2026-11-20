@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import NavMenu from '@/components/crm/NavMenu';
+import AssignedNewLeads from '@/components/crm/AssignedNewLeads';
 import { clearCrmCache, crmFetch } from '@/lib/crm';
 import { INBOUND_STATES, contactPermissions, type InboundAccess, type InboundLead, type InboundList, type InboundMember } from '@/lib/inbound-leads';
 import { sampleLeads, sampleSales } from './sample-data';
@@ -38,6 +39,11 @@ function LeadPanel({ lead, sales, preview, busy, onClose, onAssign }: { lead: In
   </div></div>;
 }
 export default function NewLeadsPage() {
+  const [inbound, setInbound] = useState(false);
+  if (!inbound) return <AssignedNewLeads onOpenInbound={() => setInbound(true)} />;
+  return <><div className="mx-auto max-w-[1800px] px-4 pt-5"><button className={button} onClick={() => setInbound(false)}>← Back to assigned leads</button></div><InboundLeadsPage /></>;
+}
+function InboundLeadsPage() {
   const [access, setAccess] = useState<InboundAccess | null>(null); const [data, setData] = useState<InboundList>(empty); const [loading, setLoading] = useState(true); const [error, setError] = useState(''); const [message, setMessage] = useState('');
   const [preview, setPreview] = useState(false); const [samples, setSamples] = useState<InboundLead[]>([]); const [status, setStatus] = useState(''); const [source, setSource] = useState(''); const [search, setSearch] = useState(''); const [query, setQuery] = useState(''); const [page, setPage] = useState(1); const [selectedId, setSelectedId] = useState<string | null>(null); const [busy, setBusy] = useState(false);
   const loadVersion = useRef(0);
