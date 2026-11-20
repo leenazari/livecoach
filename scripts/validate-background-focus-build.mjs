@@ -5,6 +5,7 @@ import ts from "typescript";
 
 import * as focusBuild from "../lib/call-focus-build.ts";
 import * as leadContext from "../lib/call-lead-context.ts";
+import * as salesScript from "../lib/sales-call-script.ts";
 
 const read = (path) =>
   readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -164,6 +165,7 @@ async function persistenceModule(db) {
 const db = makeDb();
 const persistence = await persistenceModule(db);
 const scope = { userId: "owner-a", workspaceId: "workspace-a" };
+const preparedPitch = salesScript.normaliseAdamPitch(null, salesScript.adamPitchContextKey({ upcomingId: "call-1", companyId: "company-1" }));
 assert.equal(
   (await persistence.verifyFocusBuildTarget(scope, "call-1")).company_id,
   "company-1"
@@ -183,10 +185,12 @@ const saved = await persistence.persistFocusBuild({
     subjectName: "Alex",
     character: "A practical buyer who wants a contained pilot.",
     focusAreas: ["Confirm ten pilot users", "Agree success measures"],
+    salesScript: preparedPitch,
   },
 });
 assert.equal(db.writes, 1);
 assert.equal(db.row.prepped, true);
+assert.deepEqual(saved.saved.prep.salesScript, preparedPitch, "Nine prompts survive the server save without replacing private prep");
 assert.deepEqual(Array.from(saved.saved.prep.suggestedComps), [
   "Confirm ten pilot users",
   "Agree success measures",

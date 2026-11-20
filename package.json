@@ -171,6 +171,7 @@
     "validate:brain-mcp": "node scripts/validate-brain-mcp.mjs",
     "validate:inbound-leads": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-inbound-new-leads.mjs",
     "validate:scripted-coaching": "node scripts/validate-scripted-call-coaching.mjs",
+    "validate:adam-pitch": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-adam-three-stage-pitch.mjs",
     "validate:call-action-preparation": "node scripts/validate-call-action-preparation.mjs"
   },
   "dependencies": {

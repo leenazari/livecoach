@@ -9,6 +9,7 @@ export type FocusBuildResult = {
   upgrades?: unknown;
   reconcile?: boolean;
   degraded?: boolean;
+  salesScript?: unknown;
 };
 
 type FocusUpgrade = { from: string; to: string };

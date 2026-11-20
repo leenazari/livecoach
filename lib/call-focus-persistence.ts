@@ -204,6 +204,7 @@ export async function persistFocusBuild(input: {
         : (currentPrep as any)?.character || "",
     suggestedComps: merged.suggestedFocus,
     selectedComps: merged.selectedFocus,
+    ...(input.result.salesScript ? { salesScript: input.result.salesScript } : {}),
     planStage,
     focusBasisBrief: requestedIntent,
     focusBasisEmailContext:

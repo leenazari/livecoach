@@ -56,7 +56,13 @@ assert.deepEqual(
   plain(script.cleanProducts(["training", "adam", "adam", "fake"])),
   ["adam", "training"],
 );
-assert.equal(script.cleanStage("injected"), "hook");
+assert.equal(script.cleanStage("injected"), "listen");
+assert.equal(script.approvedAdamScript(script.ADAM_SCRIPT_V2.version).steps.length, 5, "Old reports retain their original script");
+assert.deepEqual(plain(script.ADAM_SCRIPT.steps.map(step => step.id)), ["listen", "demo", "close"]);
+assert.ok(script.ADAM_SCRIPT.steps.every(step => step.questions.length === 3));
+assert.equal(script.cleanStage("next_step"), "close");
+assert.equal(script.cleanStage("discovery"), "listen");
+assert.equal(script.cleanStage("discovery", script.ADAM_SCRIPT_V2.version), "discovery");
 assert.match(
   script.scriptContext(["adam", "recruitment"], "demo"),
   /combined script has not been approved/,
@@ -104,7 +110,7 @@ const baseReport = {
   criteria: [
     {
       product: "adam",
-      stageId: "hook",
+      stageId: "listen",
       status: "met",
       evidenceQuote: "I noticed your missed plumbing enquiries",
       explanation: "Specific opening",
@@ -408,6 +414,34 @@ const save = {
   products: ["adam"],
   expectedUpdatedAt: null,
 };
+const pitchContext = { companyId: callId, upcomingId: "upcoming-a", workstreamId: "project-a" };
+const pitch = script.normaliseAdamPitch({ steps: script.ADAM_SCRIPT.steps.map(step => ({
+  id: step.id, questions: step.questions.map(q => `For Acme, ${q}`),
+})) }, script.adamPitchContextKey(pitchContext));
+const pitchSave = { ...save, ...pitchContext, key: "draft:upcoming-a", prep: { salesScript: pitch } };
+assert.equal((await planRoute.POST(request(pitchSave))).status, 200);
+const getPitch = () => planRoute.GET({ nextUrl: new URL(`https://test/api?key=draft:upcoming-a&companyId=${callId}`) });
+let pitchRead = await (await getPitch()).json();
+assert.deepEqual(pitchRead.plan.prep.salesScript, plain(pitch), "Refresh returns the exact saved nine prompts");
+assert.deepEqual(pitchRead.plan.script_snapshot.steps[0].questions, plain(pitch.steps[0].questions));
+const camScope = scope;
+scope = { ...camScope, userId: sharon };
+assert.equal((await (await getPitch()).json()).plan, null, "Another sales user cannot read Cam's private pitch");
+scope = { ...camScope, workspaceId: otherWorkspace };
+assert.equal((await (await getPitch()).json()).plan, null, "Another workspace cannot read Cam's private pitch");
+scope = { ...camScope, status: "inactive" };
+assert.equal((await getPitch()).status, 403);
+assert.equal((await planRoute.POST(request(pitchSave))).status, 403);
+scope = camScope;
+assert.equal((await planRoute.POST(request({ ...pitchSave, key: "draft:other-call", upcomingId: "other-call" }))).status, 200);
+const mismatch = rows.call_script_plans.find(row => row.context_key === "draft:other-call");
+assert.deepEqual(plain(mismatch.script_snapshot.steps[0].questions), plain(script.ADAM_SCRIPT.steps[0].questions), "A mismatched call never enters the coaching snapshot");
+rows.call_script_plans.push({ workspace_id: workspace, owner_id: cam, context_key: "session:lc-oldcall", session_id: "lc-oldcall",
+  script_snapshot: script.ADAM_SCRIPT_V2, updated_at: "old-version", timeline: [] });
+assert.equal((await planRoute.POST(request({ ...pitchSave, key: "session:lc-oldcall", sessionId: "lc-oldcall", stage: "discovery", expectedUpdatedAt: "old-version" }))).status, 200);
+const legacy = rows.call_script_plans.find(row => row.context_key === "session:lc-oldcall");
+assert.equal(legacy.script_snapshot.version, script.ADAM_SCRIPT_V2.version);
+assert.equal(legacy.stage, "discovery", "Historical calls keep the original script and stage");
 let response = await planRoute.POST(request(save));
 assert.equal(response.status, 200);
 const saved = await response.json();
@@ -601,6 +635,8 @@ const render = async () =>
 await render();
 await act(async () => {
   state.choose(["adam", "recruitment"]);
+  state.setStage("demo");
+  assert.equal(state.scriptRef.current.stage, "demo", "An immediate live cue receives the new section without waiting for a render");
 });
 hookProps = { ...hookProps, live: true };
 await render();
@@ -705,10 +741,33 @@ await act(async () =>
 assert.deepEqual(plain(chosen), ["adam", "recruitment"]);
 await act(async () =>
   [...document.querySelectorAll("button")]
-    .find((b) => b.textContent === script.ADAM_SCRIPT.steps[1].title)
+    .find((b) => b.textContent.endsWith(script.ADAM_SCRIPT.steps[1].title))
     .click(),
 );
-assert.equal(selectedStage, "discovery");
+assert.equal(selectedStage, "demo");
+assert.equal(document.querySelectorAll('[aria-label="Script stage"] button').length, 3);
+assert.equal(document.querySelectorAll('ol li').length, 3);
+let prepareClicks = 0;
+for (const stage of ["listen", "demo", "close"]) {
+  await act(async () => root.render(React.createElement(panel, {
+    products: ["adam"], onChange: () => {}, stage, onStage: value => { selectedStage = value; },
+    status: "Saved", ready: true, improvement: "", onRetry: () => {},
+    pitch, contextKey: script.adamPitchContextKey(pitchContext), onPrepare: () => prepareClicks++,
+  })));
+  assert.equal(document.querySelectorAll('ol li').length, 3);
+  assert.ok([...document.querySelectorAll('ol li')].every(li => li.textContent.includes("For Acme")));
+  assert.match(document.body.textContent, /Tailored to this call/);
+  await act(async () => document.querySelector('[aria-label="Script stage"] button').click());
+  assert.equal(prepareClicks, 0, "Changing section must not run paid preparation");
+}
+await act(async () => root.render(React.createElement(panel, {
+  products: ["adam"], onChange: () => {}, stage: "listen", onStage: () => {},
+  status: "Saved", ready: true, improvement: "", onRetry: () => {},
+  pitch, contextKey: "another-client", live: true,
+})));
+assert.doesNotMatch(document.body.textContent, /For Acme/);
+assert.match(document.body.textContent, /Starter prompts/);
+assert.equal(document.querySelectorAll('ol li').length, 3);
 await act(async () => root.unmount());
 let ownerPage = false,
   queueReads = [],

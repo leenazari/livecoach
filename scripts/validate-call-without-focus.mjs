@@ -10,6 +10,7 @@ import { browserMeetingLaunchUrl } from "../lib/meeting-account.ts";
 import { scheduledCallSessionId } from "../lib/scheduled-call-session.ts";
 import { refreshCallPrepContext } from "../lib/call-prep-refresh.ts";
 import { captureElapsedSeconds } from "../lib/call-capture-lifecycle.ts";
+import { adamPitchContextKey, savedAdamPitch } from "../lib/sales-call-script.ts";
 
 const require = createRequire(import.meta.url);
 const source = readFileSync(new URL("../app/call/page.tsx", import.meta.url), "utf8");
@@ -130,7 +131,7 @@ for (const scenario of [
     if (name === "next/dynamic") return { default: loader =>
       String(loader).includes("MeetStage") ? MockMeetStage : Empty };
     if (name === "@/hooks/useSalesCallPlan") return { useSalesCallPlan: () => ({products:[],choose(){},stage:"hook",setStage(){},status:"Saved",ready:true,improvement:"",retry(){},scriptRef:{current:{products:[],stage:"hook"}}}) };
-    if (name === "@/lib/sales-call-script") return { isSpokenObjection: () => false };
+    if (name === "@/lib/sales-call-script") return { isSpokenObjection: () => false, adamPitchContextKey, savedAdamPitch };
     if (name === "@/lib/crm") return { crmFetch, crmConfirmationError: () => new Error("Not confirmed") };
     if (name === "@/lib/call-prep-refresh") return { refreshCallPrepContext };
     if (name === "@/lib/call-capture-lifecycle") return { captureElapsedSeconds };
