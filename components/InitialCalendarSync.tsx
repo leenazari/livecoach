@@ -1,24 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { crmFetch } from "@/lib/crm";
-
-type CalendarSyncResult = {
-  provider?: "google" | "microsoft";
-  added?: number;
-  updated?: number;
-  removed?: number;
-  relinked?: number;
-  reconciled?: boolean;
-  calendarReconnectRequired?: boolean;
-  warning?: string | null;
-};
+import { syncCalendarAndWait, type CalendarSyncResult } from "@/lib/calendar-sync-client";
 
 type SyncState =
   | { status: "idle"; message: "" }
   | { status: "syncing" | "success" | "warning" | "error"; message: string };
 
 function successMessage(result: CalendarSyncResult): string {
+  if (result.queued) return result.warning || "Your calendar is still syncing. Check Calls shortly.";
   const provider =
     result.provider === "microsoft"
       ? "Microsoft calendar"
@@ -30,6 +20,8 @@ function successMessage(result: CalendarSyncResult): string {
   if (result.updated) changes.push(`${result.updated} updated`);
   if (result.removed) changes.push(`${result.removed} cancelled removed`);
   if (result.relinked) changes.push(`${result.relinked} relinked`);
+  if (result.reopened) changes.push(`${result.reopened} restored`);
+  if (result.backgroundCompleted) changes.push("latest calls refreshed");
   const outcome = changes.length ? changes.join(", ") : "already up to date";
   const partial = result.calendarReconnectRequired
     ? " Reconnect Google once in Settings to include secondary and shared calendars. The primary calendar was synced safely."
@@ -61,13 +53,11 @@ export default function InitialCalendarSync({
       message: "Connection saved. Syncing your calendar for the first time…",
     });
 
-    void crmFetch<CalendarSyncResult>("/api/crm/calendar-sync", {
-      method: "POST",
-    })
+    void syncCalendarAndWait()
       .then((result) => {
         window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
         setState({
-          status: result.calendarReconnectRequired ? "warning" : "success",
+          status: result.queued || result.calendarReconnectRequired ? "warning" : "success",
           message: successMessage(result),
         });
       })

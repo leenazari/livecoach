@@ -736,7 +736,9 @@ export async function gatherGlobalContext(
         }${u.prepped ? " [prepped]" : ""}${
           hiddenByStaleCompletion
             ? " [HIDDEN FROM CALLS LIST BY A STALE COMPLETION MARKER]"
-            : ""
+            : u.completed_at
+              ? " [COMPLETED]"
+              : " [OPEN IN CRM - NO COMPLETION MARKER]"
         } - prep page: ${prepUrl}${
           asksForJoinLink && u.meeting_url
             ? ` - requested join link: ${u.meeting_url}`

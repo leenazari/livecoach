@@ -44,7 +44,7 @@ assert.match(googleStatus, /googleCanListCalendars\(scopes\)/);
 assert.match(googleStatus, /calendarReconnectRequired/);
 assert.match(settings, /Grant calendar access/);
 assert.match(settings, /Google partly connected/);
-assert.match(initialSync, /status: result\.calendarReconnectRequired \? "warning" : "success"/);
+assert.match(initialSync, /status: result\.queued \|\| result\.calendarReconnectRequired \? "warning" : "success"/);
 assert.match(upcoming, /reconnect Google once in Settings to include all calendars/);
 
 console.log("Google multi-calendar permission and safe partial-sync checks passed");

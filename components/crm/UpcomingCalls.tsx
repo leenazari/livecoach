@@ -1,5 +1,7 @@
 "use client";
 
+import { syncCalendarAndWait } from "@/lib/calendar-sync-client";
+
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -149,18 +151,7 @@ export default function UpcomingCalls({
     setSyncing(true);
     setSyncMsg("");
     try {
-      const r = await crmFetch<{
-        added: number;
-        updated: number;
-        removed?: number;
-        relinked?: number;
-        reconciled?: boolean;
-        calendarReconnectRequired?: boolean;
-        warning?: string | null;
-      }>(
-        "/api/crm/calendar-sync",
-        { method: "POST" }
-      );
+      const r = await syncCalendarAndWait();
       await load();
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
       const bits: string[] = [];
@@ -168,6 +159,8 @@ export default function UpcomingCalls({
       if (r.updated) bits.push(`${r.updated} updated`);
       if (r.removed) bits.push(`${r.removed} cancelled removed`);
       if (r.relinked) bits.push(`${r.relinked} relinked`);
+      if (r.reopened) bits.push(`${r.reopened} restored`);
+      if (r.backgroundCompleted) bits.push("latest calls refreshed");
       if (r.calendarReconnectRequired)
         bits.push("reconnect Google once in Settings to include all calendars");
       else if (r.reconciled === false)
