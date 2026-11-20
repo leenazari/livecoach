@@ -155,11 +155,13 @@ function NavMenuInner({
   const defaultCoreItems = (viewerRole !== null || inboundNavigation)
     ? [baseCoreItems[0], NEW_LEADS_ITEM, ...baseCoreItems.slice(1)]
     : baseCoreItems;
-  const coreItems = callsFirst
+  // Staff need a direct route to their calls too. This changes navigation only,
+  // not the owner's private calls-first dashboard preference or call access.
+  const coreItems = callsFirst || salesHome
     ? [homeItem, CALLS_ITEM, ...defaultCoreItems.filter(item => item.href !== homeItem.href && item.href !== CALLS_ITEM.href)]
     : defaultCoreItems;
   const moreItems = salesHome
-    ? [CALLS_ITEM, PLAYBOOK_ITEM, DOCUMENTS_ITEM, COSTS_ITEM, ...MORE_ITEMS]
+    ? [PLAYBOOK_ITEM, DOCUMENTS_ITEM, COSTS_ITEM, ...MORE_ITEMS]
     : MORE_ITEMS;
   const allItems = [...coreItems, START_ITEM, ...moreItems.filter(item => !coreItems.some(core => core.href === item.href))];
 
@@ -271,9 +273,9 @@ function NavMenuInner({
     return false;
   };
 
-  // PHONE: a bottom tab bar with the five core destinations, the central
-  // "Start" lifted like a call-to-action. The brain chat stays reachable via
-  // its own floating button (nudged up on mobile so it clears this bar).
+  // PHONE: keep Calls directly reachable for staff without removing Outreach
+  // or Tasks. The private calls-first layout retains its existing five tabs.
+  // The brain chat stays reachable via its own floating button above this bar.
   if (mobile) {
     const BOTTOM: Item[] = callsFirst ? [
       homeItem, CALLS_ITEM, { href: "/call", label: "Start", icon: "▸" }, TASKS_ITEM,
@@ -283,6 +285,7 @@ function NavMenuInner({
         : OUTREACH_ITEM,
       homeItem,
       { href: "/call", label: "Start", icon: "▸" },
+      ...(salesHome ? [CALLS_ITEM] : []),
       TASKS_ITEM,
     ];
     return (
