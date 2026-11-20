@@ -6,6 +6,7 @@ import Link from "next/link";
 import NavMenu from "@/components/crm/NavMenu";
 import SalesPipelineLane from "@/components/crm/SalesPipelineLane";
 import { crmConfirmationError, crmFetch } from "@/lib/crm";
+import { syncCalendarAndWait } from "@/lib/calendar-sync-client";
 import { capitaliseSentenceStarts } from "@/lib/text";
 import MatrixRain from "@/components/MatrixRain";
 import MetricDrilldown from "@/components/crm/MetricDrilldown";
@@ -223,28 +224,28 @@ export default function WorkInboxPage() {
     setNotice("");
     setError("");
     try {
-      const result = await crmFetch<{
-        provider?: string;
-        added?: number;
-        updated?: number;
-        removed?: number;
-        relinked?: number;
-        reconciled?: boolean;
-        calendarReconnectRequired?: boolean;
-        warning?: string | null;
-      }>("/api/crm/calendar-sync", { method: "POST" });
+      const result = await syncCalendarAndWait();
       await load(true);
+      setFilter("calls");
+      setVisible(10);
       window.dispatchEvent(
         new CustomEvent("lc:tasks-updated", {
           detail: { source: "work-inbox" },
         })
       );
 
+      if (result.queued) {
+        setNotice(result.warning || "Your calendar update is still running. Check Calls shortly.");
+        return;
+      }
+
       const changes: string[] = [];
       if (result.added) changes.push(`${result.added} new`);
       if (result.updated) changes.push(`${result.updated} updated`);
       if (result.removed) changes.push(`${result.removed} cancelled removed`);
       if (result.relinked) changes.push(`${result.relinked} relinked`);
+      if (result.reopened) changes.push(`${result.reopened} restored`);
+      if (result.backgroundCompleted) changes.push("latest calls refreshed");
       const provider = result.provider
         ? `${capitaliseSentenceStarts(result.provider)} calendar`
         : "Calendar";
@@ -254,7 +255,7 @@ export default function WorkInboxPage() {
         : result.reconciled === false
           ? " Cancellations were kept safely because the provider returned a partial result."
           : "";
-      setNotice(`${provider} synced. ${outcome}.${partial}`);
+      setNotice(`${provider} synced. ${outcome}.${partial}${result.warning && !partial ? ` ${result.warning}` : ""}`);
     } catch (err: any) {
       setError(err?.message || "Calendar could not be synced. Please try again.");
     } finally {
