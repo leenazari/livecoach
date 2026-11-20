@@ -23,6 +23,8 @@ import {
   reopenReplyAttention,
   resolveReplyAttention,
 } from "@/lib/reply-attention";
+import { adamSendBlockReason } from "@/lib/adam-outbound-server";
+import { isAdamCampaign } from "@/lib/adam-outbound";
 
 export const OUTREACH_SEND_SPACING_MINUTES = 5;
 const SEND_SPACING_MS = OUTREACH_SEND_SPACING_MINUTES * 60 * 1000;
@@ -377,6 +379,15 @@ export async function dispatchDueOutreachMessage(messageId: string) {
     await stopClaim(
       "This CRM relationship is engaged, dormant or not confirmed as a new lead"
     );
+  if (!isReply && isAdamCampaign(campaign)) {
+    const adamBlock = await adamSendBlockReason({
+      campaign,
+      prospect,
+      workspaceId: sender.workspaceId,
+      userId: sender.userId,
+    });
+    if (adamBlock) await stopClaim(adamBlock);
+  }
 
   const today = londonDate(now);
   if (message.delivery_day !== today) {

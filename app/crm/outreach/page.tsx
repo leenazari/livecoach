@@ -41,6 +41,8 @@ import {
 import { OVERNIGHT_RESEARCH_INVENTORY_LIMIT } from "@/lib/outreach-overnight-preparation";
 import type { OutreachCampaignCtaConfig } from "@/lib/outreach-demo-reply-cta";
 import { OUTREACH_RESOURCE_LABELS, useOutreachLoads, type OutreachResource } from "@/lib/use-outreach-loads";
+import AdamOutboundPanel, { AdamLeadFacts } from "@/components/crm/AdamOutboundPanel";
+import { isAdamCampaign, prospectMatchesCampaignFilter } from "@/lib/adam-outbound";
 
 const CampaignSequenceBuilder = dynamic(
   () => import("@/components/crm/CampaignSequenceBuilder"),
@@ -249,6 +251,7 @@ function queueWaveRank(row: QueueRow): number {
 }
 
 function queueRowNeedsVoiceScript(row: QueueRow): boolean {
+  if (isAdamCampaign(row.campaign)) return false;
   return Boolean(
     row.message &&
       ["draft", "failed"].includes(row.message.status) &&
@@ -258,6 +261,7 @@ function queueRowNeedsVoiceScript(row: QueueRow): boolean {
 
 function queueRowNeedsPreparation(row: QueueRow): boolean {
   if (!row.prospect?.id) return false;
+  if (isAdamCampaign(row.campaign)) return !row.message && row.status === "queued";
   if (queueRowNeedsVoiceScript(row)) return true;
   return Boolean(
     !row.message &&
@@ -1908,6 +1912,24 @@ export default function OutreachPage() {
     }
   };
 
+  const draftAdamLead = async (prospectId: string) => {
+    setBusy(`adam-draft:${prospectId}`);
+    setError("");
+    setNotice("");
+    try {
+      const result = await crmFetch<{ notice?: string }>("/api/crm/outreach/adam/draft", {
+        method: "POST",
+        body: JSON.stringify({ prospectId }),
+      });
+      setNotice(result.notice || "Adam draft saved. Nothing was sent.");
+      await Promise.all([loadProspects(), loadCore()]);
+    } catch (draftError: any) {
+      setError(draftError.message || "The Adam draft was not saved");
+    } finally {
+      setBusy("");
+    }
+  };
+
   const prepareFromProspects = async (prospect: Prospect) => {
     const existingJob = prepareJobsRef.current[prospect.id];
     if (existingJob === "adding" || existingJob === "queued" || existingJob === "researching") return;
@@ -2033,7 +2055,7 @@ export default function OutreachPage() {
       const stage = outreachStage(prospect).key;
       const stageMatches = stageFilter === "all" || (stageFilter === "active" ? stage !== "suppressed" : stage === stageFilter);
       return stageMatches &&
-        (prospectCampaignId === "all" || prospect.outreach?.campaignIds?.includes(prospectCampaignId)) &&
+        prospectMatchesCampaignFilter(prospect, prospectCampaignId) &&
         (ownerFilter === "all" ||
           (ownerFilter === "available" &&
             (!prospect.assigned_to_user_id ||
@@ -2043,7 +2065,7 @@ export default function OutreachPage() {
           prospect.assigned_to_user_id === ownerFilter) &&
         (priority === "all" || prospect.priority === priority) &&
         (recommendationFilter === "all" || prospect.recommendation?.action === recommendationFilter) &&
-        (!needle || `${prospect.first_name || ""} ${prospect.last_name || ""} ${prospect.company_name} ${prospect.job_title || ""} ${prospect.email}`.toLowerCase().includes(needle));
+        (!needle || `${prospect.first_name || ""} ${prospect.last_name || ""} ${prospect.company_name} ${prospect.job_title || ""} ${prospect.email} ${prospect.source_metadata?.general_email || ""} ${prospect.source_metadata?.decision_maker_email || ""} ${prospect.source_metadata?.page_status || ""}`.toLowerCase().includes(needle));
     });
     rows.sort((left, right) => {
       let compared = 0;
@@ -2226,6 +2248,7 @@ export default function OutreachPage() {
       {!loading && tabLoading ? <MatrixRain size="compact" messages={["loading this outreach view"]} /> : null}
 
       {tab === "prospects" ? <StagedOutreachImports onApplied={async () => { setProspectCampaignId("all"); await loadProspects(); }} /> : null}
+      {tab === "prospects" ? <AdamOutboundPanel campaignId={campaigns.find((campaign) => isAdamCampaign(campaign))?.id || null} canEditPrompt={canManageCampaigns} selected={prospectCampaignId !== "all" && prospectCampaignId === campaigns.find((campaign) => isAdamCampaign(campaign))?.id} onShowCampaign={(campaignId) => { setProspectCampaignId(campaignId); selectTab("prospects"); }} onSynced={async () => { await loadProspects(); }} /> : null}
 
       {!loading && !tabLoading && tabDataReady && tab === "queue" ? <section data-sales-tour="outreach-queue">
         <RevenueToday />
@@ -2297,8 +2320,8 @@ export default function OutreachPage() {
               {!m && row.next_action_at && row.sequenceStepDue === false ? <p className="mt-2 text-xs text-muted">Next step becomes ready {formatActivityDate(row.next_action_at)}.</p> : null}
             </div>
             {canPrepare ? (
-              <button onClick={() => needsVoiceScript && m?.id ? void createVoiceScript(m.id, p.id) : prepare(p.id)} disabled={preparePending || ctaBlocked} className={`${primary} w-full sm:w-auto`}>
-                {prepareStatus === "adding" ? "Saving to queue…" : prepareStatus === "researching" ? needsVoiceScript ? "Creating voice script…" : "Researching in background…" : prepareStatus === "queued" ? "Queued on server" : prepareStatus === "done" ? needsVoiceScript ? "Voice script ready" : "Draft ready" : needsVoiceScript ? "Create voice script" : isFollowUp ? `Prepare step ${row.current_step} follow up` : "Research + write email + voice script"}
+              <button onClick={() => isAdamCampaign(row.campaign) ? void draftAdamLead(p.id) : needsVoiceScript && m?.id ? void createVoiceScript(m.id, p.id) : prepare(p.id)} disabled={preparePending || ctaBlocked || busy === `adam-draft:${p.id}`} className={`${primary} w-full sm:w-auto`}>
+                {isAdamCampaign(row.campaign) ? (busy === `adam-draft:${p.id}` ? "Drafting…" : "Draft Adam email") : prepareStatus === "adding" ? "Saving to queue…" : prepareStatus === "researching" ? needsVoiceScript ? "Creating voice script…" : "Researching in background…" : prepareStatus === "queued" ? "Queued on server" : prepareStatus === "done" ? needsVoiceScript ? "Voice script ready" : "Draft ready" : needsVoiceScript ? "Create voice script" : isFollowUp ? `Prepare step ${row.current_step} follow up` : "Research + write email + voice script"}
               </button>
             ) : manual && channel === "linkedin" ? (
               <div className="grid w-full gap-2 sm:w-auto sm:min-w-[25rem] sm:grid-cols-2">
@@ -2381,7 +2404,7 @@ export default function OutreachPage() {
                 </div>
               ) : null}
               <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-                <button onClick={() => prepare(p.id)} disabled={!!busy || prepareStatus === "queued" || prepareStatus === "researching" || ctaBlocked || ["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} className={button}>{prepareStatus === "queued" || prepareStatus === "researching" ? "Refreshing draft…" : "Refresh draft"}</button>
+                <button onClick={() => isAdamCampaign(row.campaign) ? void draftAdamLead(p.id) : prepare(p.id)} disabled={!!busy || prepareStatus === "queued" || prepareStatus === "researching" || ctaBlocked || ["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} className={button}>{isAdamCampaign(row.campaign) ? "Refresh Adam draft" : prepareStatus === "queued" || prepareStatus === "researching" ? "Refreshing draft…" : "Refresh draft"}</button>
                 <button onClick={() => saveDraft(m.id)} disabled={!!busy || ["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} className={button}>Save changes</button>
                 {m.status === "draft" || m.status === "failed" ? <button onClick={() => approveAndSend(m.id)} disabled={!!busy || ctaRefreshRequired} className={primary}>{busy === `approve-send:${m.id}` ? "Approving and queueing…" : "Approve & queue"}</button> : null}
                 {m.status === "approved" && !m.scheduled_at ? <button onClick={() => send(m.id)} disabled={!!busy} className={primary}>{busy === `send:${m.id}` ? "Queueing…" : "Queue approved email"}</button> : null}
@@ -2492,7 +2515,7 @@ export default function OutreachPage() {
                     <span className="mt-1 block text-[0.65rem] leading-4 text-muted">Add and prepare links this lead and prepares a draft. It does not send.</span>
                   </label>
                 ) : null}
-                {!isMine ? canClaim ? <button type="button" onClick={() => updateAssignment(prospect.id, currentUser)} disabled={!!busy} className={`${button} min-h-10 px-3`}>Claim</button> : <span className="inline-flex min-h-10 items-center rounded-lg border border-edge px-3 font-mono text-[0.5rem] uppercase text-muted">Assigned to {assignedMember?.name || "another user"}</span> : isBrainDirect && stage.key !== "suppressed" ? <button type="button" onClick={() => selectTab("activity")} className={`${primary} min-h-10 px-3`}>{pendingStatus === "sent" ? "View sent email" : pendingStatus === "sending" ? "View sending email" : "View queued email"}</button> : !campaignReady && stage.key !== "suppressed" ? <span className="inline-flex min-h-10 items-center rounded-lg border border-amber/45 bg-amber/10 px-3 font-mono text-[0.5rem] uppercase text-amber">{membershipCampaigns[0]?.name || "Campaign"} is not active</span> : canPrepare ? <button type="button" onClick={() => prepareFromProspects(prospect)} disabled={preparePending} className={`${primary} min-h-10 px-3`}>{prepareStatus === "adding" ? "Adding…" : prepareStatus === "researching" ? "Researching…" : prepareStatus === "queued" ? "Queued" : prepareStatus === "done" ? "Draft ready" : campaignChoice.needsCampaign ? "Add and prepare" : "Queue research"}</button> : ["draft", "approved"].includes(stage.key) ? <button type="button" onClick={() => openProspectWork(prospect)} disabled={!!busy} className={`${primary} min-h-10 px-3`}>{busy === `prospect-open:${prospect.id}` ? "Opening…" : pendingStatus === "approved" ? "Review to send" : "Review draft"}</button> : stage.key !== "suppressed" ? <button type="button" onClick={() => selectTab(openTab)} className={`${button} min-h-10 px-3`}>{openTab === "replies" ? "View reply" : "View history"}</button> : null}
+                {!isMine ? canClaim ? <button type="button" onClick={() => updateAssignment(prospect.id, currentUser)} disabled={!!busy} className={`${button} min-h-10 px-3`}>Claim</button> : <span className="inline-flex min-h-10 items-center rounded-lg border border-edge px-3 font-mono text-[0.5rem] uppercase text-muted">Assigned to {assignedMember?.name || "another user"}</span> : isBrainDirect && stage.key !== "suppressed" ? <button type="button" onClick={() => selectTab("activity")} className={`${primary} min-h-10 px-3`}>{pendingStatus === "sent" ? "View sent email" : pendingStatus === "sending" ? "View sending email" : "View queued email"}</button> : !campaignReady && stage.key !== "suppressed" ? <span className="inline-flex min-h-10 items-center rounded-lg border border-amber/45 bg-amber/10 px-3 font-mono text-[0.5rem] uppercase text-amber">{membershipCampaigns[0]?.name || "Campaign"} is not active</span> : prospect.source_metadata?.campaign_slug === "adam_daily_leads" && isMine && !prospect.source_metadata?.adam_hold && (stage.key === "not_started" || stage.key === "queued") ? <button type="button" onClick={() => void draftAdamLead(prospect.id)} disabled={!!busy} className={`${primary} min-h-10 px-3`}>{busy === `adam-draft:${prospect.id}` ? "Drafting…" : "Draft Adam email"}</button> : canPrepare ? <button type="button" onClick={() => prepareFromProspects(prospect)} disabled={preparePending} className={`${primary} min-h-10 px-3`}>{prepareStatus === "adding" ? "Adding…" : prepareStatus === "researching" ? "Researching…" : prepareStatus === "queued" ? "Queued" : prepareStatus === "done" ? "Draft ready" : campaignChoice.needsCampaign ? "Add and prepare" : "Queue research"}</button> : ["draft", "approved"].includes(stage.key) ? <button type="button" onClick={() => openProspectWork(prospect)} disabled={!!busy} className={`${primary} min-h-10 px-3`}>{busy === `prospect-open:${prospect.id}` ? "Opening…" : pendingStatus === "approved" ? "Review to send" : "Review draft"}</button> : stage.key !== "suppressed" ? <button type="button" onClick={() => selectTab(openTab)} className={`${button} min-h-10 px-3`}>{openTab === "replies" ? "View reply" : "View history"}</button> : null}
                 {isMine && stage.key !== "suppressed" ? (
                   <details className="relative">
                     <summary className={`${button} flex min-h-10 cursor-pointer list-none items-center px-3 [&::-webkit-details-marker]:hidden`}>
@@ -2557,6 +2580,7 @@ export default function OutreachPage() {
                   </details>
                 ) : null}
               </div>
+              {prospect.source_metadata?.campaign_slug === "adam_daily_leads" ? <AdamLeadFacts prospect={prospect} busy={busy} canDraft={isMine && !prospect.source_metadata?.adam_hold && (stage.key === "not_started" || stage.key === "queued")} onDraft={(prospectId) => void draftAdamLead(prospectId)} /> : null}
               {removalProspectId === prospect.id ? <div className="rounded-lg border border-rust/40 bg-rust/[0.07] p-3 sm:col-span-7"><p className="text-sm text-bone/80">Keep the history, but stop future outreach to:</p><div className="mt-2 flex flex-col gap-2 sm:flex-row"><button type="button" onClick={() => removeFromOutreach(prospect, "person")} disabled={!!busy} className={`${button} border-rust/50 text-rust`}>This person only</button>{prospect.company_domain ? <button type="button" onClick={() => removeFromOutreach(prospect, "company")} disabled={!!busy} className={`${button} border-rust/50 text-rust`}>Everyone at {prospect.company_name}</button> : null}<button type="button" onClick={() => setRemovalProspectId("")} className={button}>Cancel</button></div></div> : null}
               {manualCallProspectId === prospect.id ? <div className="sm:col-span-7"><ProspectManualCall prospect={prospect} campaignId={campaignChoice.callCampaignId} onCancel={() => setManualCallProspectId("")} onSaved={async () => { setManualCallProspectId(""); setNotice("Call saved. The next action is already in your work queue while the concise read finishes in the background."); await Promise.all([loadProspects(), loadCore(), loadMetrics()]); }} /></div> : null}
               {followUpProspectId === prospect.id ? <div className="sm:col-span-7"><ProspectFollowUpReminder prospect={prospect} onCancel={() => setFollowUpProspectId("")} onSaved={async (result) => { setFollowUpProspectId(""); setNotice(result.rescheduled ? "Follow-up reminder updated. The new date and time now apply in Today, To-dos and Calls." : "Follow-up reminder saved. It is now in Today, To-dos and Calls."); }} /></div> : null}

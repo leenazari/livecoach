@@ -36,6 +36,10 @@ export const GOOGLE_CALENDAR_LIST_READ_SCOPE =
   "https://www.googleapis.com/auth/calendar.calendarlist.readonly";
 export const GOOGLE_DRIVE_FILE_SCOPE =
   "https://www.googleapis.com/auth/drive.file";
+// Opt-in only. The normal Google connect flow does not ask for Sheets.
+// Adam outbound adds it when someone reconnects with ?sheets=1, after the
+// scope is allowed on the existing Google Cloud OAuth client.
+export const GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 export const GOOGLE_ANALYTICS_READ_SCOPE =
   "https://www.googleapis.com/auth/analytics.readonly";
 
@@ -71,12 +75,20 @@ export function googleConfigured(): boolean {
   );
 }
 
-export function buildAuthUrl(state: string, includeAnalytics = false): string {
+export function buildAuthUrl(
+  state: string,
+  includeAnalytics = false,
+  includeSheets = false
+): string {
+  const extras = [
+    includeAnalytics ? GOOGLE_ANALYTICS_READ_SCOPE : "",
+    includeSheets ? GOOGLE_SHEETS_SCOPE : "",
+  ].filter(Boolean);
   const p = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID || "",
     redirect_uri: process.env.GOOGLE_REDIRECT_URI || "",
     response_type: "code",
-    scope: includeAnalytics ? `${SCOPE} ${GOOGLE_ANALYTICS_READ_SCOPE}` : SCOPE,
+    scope: extras.length ? `${SCOPE} ${extras.join(" ")}` : SCOPE,
     access_type: "offline", // get a refresh token
     prompt: "consent", // force a refresh token on every connect
     include_granted_scopes: "true",

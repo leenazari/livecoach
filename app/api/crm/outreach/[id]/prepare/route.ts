@@ -163,6 +163,21 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   try {
     const sender = await resolveOutreachIdentity();
     const prospectId = params.id;
+    const { data: adamProspect } = await supabaseAdmin
+      .from("outreach_prospects")
+      .select("source_metadata")
+      .eq("workspace_id", sender.workspaceId)
+      .eq("id", prospectId)
+      .maybeSingle();
+    if (adamProspect?.source_metadata?.campaign_slug === "adam_daily_leads") {
+      return NextResponse.json(crmBlockerPayload({
+        code: "adam_prepare_blocked",
+        title: "Use Draft Adam email for this lead",
+        reason: "Adam outbound keeps its own prompt on the campaign, so the Interviewa research writer did not run.",
+        nextAction: "Open Prospects, filter to Adam outbound, and press Draft Adam email. Nothing was sent.",
+        responsible: "user",
+      }), { status: 409 });
+    }
     const body = await req.json().catch(() => ({}));
     let preparation = await loadOutreachPreparation({
       client: supabaseAdmin, scope: sender, prospectId, today: londonDate(), fullRecords: true,
