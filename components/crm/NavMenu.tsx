@@ -150,7 +150,9 @@ function NavMenuInner({
         BRAIN_CONTROL_ITEM,
         ...OWNER_CORE_ITEMS,
       ];
-  const defaultCoreItems = inboundNavigation
+  // Assigned leads are available to every active member. Inbound review remains
+  // separately gated inside the page and API.
+  const defaultCoreItems = (viewerRole !== null || inboundNavigation)
     ? [baseCoreItems[0], NEW_LEADS_ITEM, ...baseCoreItems.slice(1)]
     : baseCoreItems;
   const coreItems = callsFirst

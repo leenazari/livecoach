@@ -16,6 +16,7 @@ import {
 import CustomFieldEditor from "@/components/crm/CustomFieldEditor";
 import AddFieldForm from "@/components/crm/AddFieldForm";
 import ClientContext from "@/components/crm/ClientContext";
+import { ImportedClientLead } from '@/components/crm/AssignedNewLeads';
 import NavMenu from "@/components/crm/NavMenu";
 import MatrixRain from "@/components/MatrixRain";
 import TaskList from "@/components/crm/TaskList";
@@ -822,6 +823,8 @@ export default function CompanyDetailPage() {
           </button>
         </div>
       </section>
+
+      <ImportedClientLead companyId={id} />
 
       {access?.canEdit ? <div id="sec-quick-update" className="scroll-mt-4">
         <QuickClientUpdate
