@@ -75,7 +75,11 @@ assert.equal((await (await GET()).json()).state,'unknown');
 for(const status of ['onboarding','suspended','removed']) {
   scope={...scope,status};
   const count=reads.length;
-  assert.equal((await GET()).status,403);
+  const denied=await GET();
+  assert.equal(denied.status,403);
+  const blocker=await denied.json();
+  assert.equal(blocker.code,'calendar_sync_status_access_required');
+  assert.match(blocker.nextAction,/own active LiveCoach account/);
   assert.equal(reads.length,count,'Inactive membership must never read a job');
 }
 scope=null;
