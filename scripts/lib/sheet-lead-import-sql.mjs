@@ -92,7 +92,8 @@ begin
       update public.outreach_prospects set crm_company_id=cid,assigned_to_user_id=assignee,
         status=case when lower(meta->>'sourceStatus')='not interested' then 'not_interested'
           when coalesce(meta->>'restriction','') ~* 'do not|paused|hold' then 'suppressed'
-          when status='imported' and lower(meta->>'sourceStatus') in ('contacted','demo done','no response') then 'contacted' else status end,
+          when status='imported' and (lower(meta->>'sourceStatus') in ('contacted','demo done','no response') or
+            coalesce(meta->>'emailHistory','') ~* '^\\s*(sent\\s+\\d|email\\s+\\d+\\s*:\\s*\\d)') then 'contacted' else status end,
         suppression_reason=case when coalesce(meta->>'restriction','')<>'' then meta->>'restriction' else suppression_reason end,
         source_metadata=coalesce(source_metadata,'{}'::jsonb) || jsonb_build_object('leadImportSourceRef',item->>'sourceRef'),
         updated_at=now() where id=p.id and workspace_id=ws;

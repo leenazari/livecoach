@@ -31,13 +31,14 @@ export function safeLeadUrl(value: unknown): string {
     return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? url.href : '';
   } catch { return ''; }
 }
-export function importedLeadStatus(value: unknown, restriction: unknown = ''): string {
+export function importedLeadStatus(value: unknown, restriction: unknown = '', emailHistory: unknown = ''): string {
   const raw = text(value).toLowerCase();
   if (raw.includes('not interested')) return 'not_interested';
   if (/do not|paused|hold|not interested/.test(text(restriction).toLowerCase())) return 'on_hold';
   if (/do not|paused|hold/.test(raw)) return 'on_hold';
   if (raw === 'demo done') return 'demo_done';
   if (raw === 'no response') return 'no_response';
+  if (raw === 'new' && /^\s*(sent\s+\d|email\s+\d+\s*:\s*\d)/i.test(text(emailHistory, 4000))) return 'contacted';
   return raw === 'new' ? 'new' : 'contacted';
 }
 export function hasDemoOpened(lead: AssignedLead): boolean {
@@ -78,7 +79,7 @@ export function projectAssignedLead(company: any, assignment: any, viewer: { use
     email: /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(email) ? email : '',
     emailKind: 'Email',
     phone: text(first?.phone || company.lead_phone, 300), linkedinUrl: safeLeadUrl(first?.linkedin_url), holdingPageUrl: safeLeadUrl(lead.holdingPageUrl),
-    status: importedLeadStatus(lead.sourceStatus, lead.restriction), sourceStatus: text(lead.sourceStatus, 100),
+    status: importedLeadStatus(lead.sourceStatus, lead.restriction, lead.emailHistory), sourceStatus: text(lead.sourceStatus, 100),
     sourceDate: text(lead.sourceDate, 40), importedAt: text(lead.importedAt, 40),
     sourceOrder: Number.isSafeInteger(lead.sourceRow) && lead.sourceRow >= 0 ? lead.sourceRow : 0,
     signal: text(lead.signal), signalUrl: safeLeadUrl(lead.signalUrl),

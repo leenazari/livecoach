@@ -10,6 +10,7 @@
 - A narrow projection returns permitted source notes and links only. Existing company notes, profile, mailbox context, commercial memory and unrelated contact attributes are never returned by the new API.
 - Contact names and details are read from canonical contacts. Source-only information lives in `companies.attributes.importedLead`. Only `contactIds` references are kept there, not a second copy of people or assignments.
 - Source contact status and source email dates are labelled as spreadsheet information. They are not fabricated CRM send receipts. Current CRM stage remains independent and is preserved on existing clients.
+- Explicit sent-email history takes precedence over a stale `new` source status. A recorded send must never appear in the first-contact view. Restrictions still take precedence over sent history.
 - UI pages are 25 rows. Server reads are scoped first and chunked to avoid PostgREST row limits. No AI research or messaging happens during loading or import.
 - Newest source date comes first, with newer source rows first on the same day and import time as a fallback. Users can choose oldest first or company A–Z. Quick views cover not contacted, follow-ups and missing details. Additional filters cover status, demo availability/opened, contact channel and owner. Counts use only the authorised user's data. Do-not-contact and not-interested records never appear in actionable quick views. Follow-ups are labelled as source-contacted leads, not invented due dates.
 
