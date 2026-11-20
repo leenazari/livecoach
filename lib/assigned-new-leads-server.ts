@@ -2,7 +2,7 @@ import 'server-only';
 import { supabaseService } from '@/lib/supabase';
 import { requireRequestScope } from '@/lib/request-scope';
 import { sharedClientBlockReason } from '@/lib/client-sharing-policy';
-import { projectAssignedLead, type AssignedLead } from '@/lib/assigned-new-leads';
+import { compareLeadAdded, projectAssignedLead, type AssignedLead } from '@/lib/assigned-new-leads';
 
 export class AssignedLeadAccessError extends Error {}
 export async function loadAssignedNewLeads(companyId?: string) {
@@ -61,7 +61,7 @@ export async function loadAssignedNewLeads(companyId?: string) {
     const lead = projectAssignedLead(company, assignment, viewer, names.get(assignment?.assigned_to_user_id) || 'Assigned teammate', contacts);
     if (lead) leads.push(lead);
   }
-  leads.sort((a, b) => b.sourceDate.localeCompare(a.sourceDate) || a.companyName.localeCompare(b.companyName) || a.id.localeCompare(b.id));
+  leads.sort(compareLeadAdded);
   const visibleOwners = new Set(leads.map(l => l.assignedTo));
   return { leads, isOwner, owners: [...names].filter(([id]) => visibleOwners.has(id)).map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name)) };
 }
