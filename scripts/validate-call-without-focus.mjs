@@ -20,9 +20,15 @@ const pickerModule = { exports: {} };
 new Function('require', 'module', 'exports', ts.transpileModule(readFileSync(new URL('../components/MeetingLeadPicker.tsx', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
 }).outputText)(require, pickerModule, pickerModule.exports);
-const upcomingId = "46482c8f-182c-46dc-9c25-46ea99fdeb81";
+const meetingLinkModule = { exports: {} };
+new Function('require', 'module', 'exports', ts.transpileModule(readFileSync(new URL('../components/MeetingLaunchLink.tsx', import.meta.url), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
+}).outputText)(name => {
+  if (name === '@/lib/meeting-account') return { browserMeetingLaunchUrl };
+  if (name === '@/lib/meeting-url') return { validMeetingUrl };
+  return require(name);
+}, meetingLinkModule, meetingLinkModule.exports);
 const companyId = "64883abe-8824-450a-a826-e1dbfa9e163f";
-const meetingUrl = "https://meet.google.com/abc-defg-hij";
 const savedFetch = globalThis.fetch;
 
 // Mount the real page, including its parent conditions, navigation and launch
@@ -32,7 +38,15 @@ for (const scenario of [
   "no-focus", "focus-only", "full-plan", "existing-live", "prep-failed",
   "call-loading", "call-denied", "call-mismatch", "stale-meeting", "invalid-meeting", "new-call",
   "lead-choice", "lead-choice-partial",
+  "sharon-teams", "cam-teams", "sharon-existing-teams", "cam-existing-teams",
 ]) {
+  const salesperson = scenario.startsWith("sharon") ? "sharon" : scenario.startsWith("cam") ? "cam" : "lee";
+  const upcomingId = salesperson === "sharon" ? "46482c8f-182c-46dc-9c25-46ea99fdeb82"
+    : salesperson === "cam" ? "46482c8f-182c-46dc-9c25-46ea99fdeb83" : "46482c8f-182c-46dc-9c25-46ea99fdeb81";
+  const meetingUrl = scenario.endsWith("teams")
+    ? `https://teams.microsoft.com/l/meetup-join/${salesperson}-meeting?context=%7B%22Tid%22%3A%22tenant%22%7D`
+    : "https://meet.google.com/abc-defg-hij";
+  const existingLive = scenario.includes("existing");
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     url: `https://crm.test/call${scenario === "new-call" ? "" : `?upcoming=${upcomingId}`}${scenario === "stale-meeting" ? "&meetingUrl=https%3A%2F%2Fmeet.google.com%2Fold-link-xxx" : ""}`,
     pretendToBeVisual: true,
@@ -103,7 +117,7 @@ for (const scenario of [
   const Empty = () => null;
   const MockMeetStage = props => {
     React.useEffect(() => {
-      if (scenario === "existing-live") props.onSessionRecovered(props.room, true);
+      if (existingLive) props.onSessionRecovered(props.room, true);
     }, []);
     React.useEffect(() => {
       if (props.startRequest) botRequests.push(props.startRequest);
@@ -135,6 +149,7 @@ for (const scenario of [
     if (name === "@/components/crm/CallActionDock") return { default: props =>
       React.createElement("div", { role: "region", "aria-label": "Call actions" }, props.children) };
     if (name === '@/components/MeetingLeadPicker') return pickerModule.exports;
+    if (name === '@/components/MeetingLaunchLink') return meetingLinkModule.exports;
     if (name.startsWith("@/components/")) return { default: Empty };
     return require(name);
   };
@@ -148,8 +163,13 @@ for (const scenario of [
   };
   try {
     await act(async () => root.render(React.createElement(module.exports.default)));
-    if (scenario === "existing-live") {
+    if (existingLive) {
       assert.ok(button("Exit full screen"), "Recovered live call automatically expands suggestions");
+      const meetingLink = document.querySelector('a[data-meeting-launch]');
+      assert.ok(meetingLink, "An automatically started call must still offer the actual meeting link");
+      assert.equal(meetingLink.getAttribute("href"), browserMeetingLaunchUrl(meetingUrl));
+      assert.equal(meetingLink.target, "_blank");
+      assert.equal(meetingLink.rel, "noopener noreferrer");
       await click(button("Exit full screen"));
     }
     const dock = document.querySelector('[aria-label="Call actions"]');
@@ -176,8 +196,15 @@ for (const scenario of [
       assert.equal(live.disabled, true, "Unverified scheduled call cannot start");
       assert.equal(button("Start call", dock).disabled, true);
       assert.equal(opened.length, 0);
-    } else if (scenario === "existing-live") {
+    } else if (existingLive) {
       assert.match(dock.textContent, /Call live/);
+      const meetingLink = dock.querySelector('a[data-meeting-launch]');
+      assert.ok(meetingLink, "The meeting link also stays available outside expanded coaching");
+      assert.equal(meetingLink.getAttribute("href"), browserMeetingLaunchUrl(meetingUrl));
+      // A normal anchor opens only the provider. It must not send another bot,
+      // rewrite prep or mutate the recovered session.
+      meetingLink.addEventListener("click", event => event.preventDefault());
+      await act(async () => meetingLink.click());
       await click(button("Intent & focus", document.querySelector("nav")));
       assert.ok(document.getElementById("call-setup"), "Can review setup during a live call");
       await click(button("Live", document.querySelector("nav")));
@@ -201,6 +228,13 @@ for (const scenario of [
         assert.equal(botRequests.length, 0);
       } else {
         assert.ok(button("Exit full screen"), "Starting automatically expands suggestions");
+        const meetingLink = document.querySelector('a[data-meeting-launch]');
+        if (scenario === "new-call") assert.equal(meetingLink, null, "An in-app call has no external meeting link");
+        else {
+          assert.ok(meetingLink, "A direct meeting link remains available even when window.open returns null");
+          assert.equal(meetingLink.getAttribute("href"), browserMeetingLaunchUrl(meetingUrl));
+          if (scenario.endsWith("teams")) assert.match(meetingLink.textContent, /Open Teams/);
+        }
         await click(button("Exit full screen"));
         assert.match(document.querySelector('[aria-label="Call actions"]').textContent, /Call live/);
         assert.equal(opened.length, scenario === "new-call" ? 0 : 1);

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { refreshCallPrepContext } from "@/lib/call-prep-refresh";
 import MeetingLeadPicker, { type MeetingLeadState } from "@/components/MeetingLeadPicker";
+import MeetingLaunchLink from "@/components/MeetingLaunchLink";
 import { foldDictationEvent } from "@/lib/dictation";
 import CallCarryover from "@/components/crm/CallCarryover";
 import KnowledgePanel from "@/components/KnowledgePanel";
@@ -5571,9 +5572,14 @@ export default function CallPage() {
                   <span className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-sage" />
                   Call live
                 </p>
-                <p className="mt-1 text-xs text-muted">Finish here without leaving the expanded queue.</p>
+                <p className="mt-1 text-xs text-muted">
+                  {source === "meet" ? "Open your meeting here if its tab did not open." : "Finish here without leaving the expanded queue."}
+                </p>
               </div>
-              <div className="flex gap-2">
+              <div className="grid grid-cols-2 gap-2 sm:flex">
+                {source === "meet" && callEntryState === "ready" && !ended && !summarising && (
+                  <MeetingLaunchLink meetingUrl={meetingUrl} className="col-span-2 sm:col-span-1 sm:flex-none" />
+                )}
                 <button
                   type="button"
                   onClick={() => {
@@ -5622,7 +5628,9 @@ export default function CallPage() {
               </p>
               <p className="mt-1 font-sans text-xs leading-5 text-bone/85 sm:text-sm">
                 {callLive
-                  ? "Questions and coaching are active. Wrap up or end whenever you are ready."
+                  ? source === "meet"
+                    ? "Coaching is active. Open your meeting here if its tab did not open."
+                    : "Questions and coaching are active. Wrap up or end whenever you are ready."
                   : callEntryState === "unavailable"
                   ? "Reopen this meeting from your calls list to verify access. No new call has been started."
                   : callEntryState === "loading"
@@ -5639,6 +5647,9 @@ export default function CallPage() {
             <div className="grid min-w-0 grid-cols-1 gap-2 min-[380px]:grid-cols-2 sm:flex sm:shrink-0">
               {callLive ? (
                 <>
+                  {source === "meet" && callEntryState === "ready" && !summarising && (
+                    <MeetingLaunchLink meetingUrl={meetingUrl} className="min-[380px]:col-span-2 sm:flex-none" />
+                  )}
                   <button
                     type="button"
                     onClick={summarizeNow}
