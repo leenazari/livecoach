@@ -13,7 +13,13 @@ const headers = { "Cache-Control": "private, no-store, max-age=0" };
 export async function GET() {
   const scope = getRequestScope();
   if (!scope || scope.status !== "active") {
-    return NextResponse.json({ error: "Active workspace access is required to check your calendar sync." }, { status: 403, headers });
+    return NextResponse.json(crmBlockerPayload({
+      code: "calendar_sync_status_access_required",
+      title: "Calendar sync check blocked",
+      reason: "An active signed-in workspace account is required to check calendar sync",
+      nextAction: "Sign in again with your own active LiveCoach account. If your account is inactive, ask your workspace owner to restore access",
+      responsible: "user",
+    }), { status: 403, headers });
   }
   try {
     const { data, error } = await supabaseService
