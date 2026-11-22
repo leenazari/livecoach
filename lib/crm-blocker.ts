@@ -114,6 +114,8 @@ function crmResource(url: string): { key: string; label: string; lower: string }
     return { key: "notification", label: "Notification", lower: "notification" };
   if (path.includes("/assistant") || path.includes("/brain"))
     return { key: "brain", label: "Brain", lower: "Brain" };
+  if (path.includes("/lead-generator"))
+    return { key: "lead_generator", label: "Lead generator", lower: "lead generator" };
   if (path.includes("/calendar"))
     return { key: "calendar", label: "Calendar", lower: "calendar" };
   return { key: "record", label: "CRM", lower: "CRM" };
@@ -140,7 +142,12 @@ export function crmFallbackBlockerPayload(
     "Keep any unsaved text and reopen the record to check its latest state. If the problem continues, share the support code with a workspace owner";
   let responsible: CrmBlockerOwner = "system";
   let outcome: string | undefined;
-  const checkBeforeRetry = /\/(?:send|queue|rehearse)$/.test(String(input.url || "").split(/[?#]/)[0])
+  const pathOnly = String(input.url || "").split(/[?#]/)[0];
+  const checkBeforeRetry = /\/lead-generator\/sample$/.test(pathOnly)
+    ? "This sample may already have been charged. Check with a workspace owner before running another sample. If it is unclear, share the support code with a workspace owner"
+    : /\/lead-generator\/campaigns/.test(pathOnly)
+    ? "Refresh the campaign list before saving again. Do not create another campaign if this one is already listed. If it is unclear, share the support code with a workspace owner"
+    : /\/(?:send|queue|rehearse)$/.test(pathOnly)
     ? "Check Activity and the send queue before trying again. Do not send another copy if this email is already queued or sent. If its status is unclear, share the support code with a workspace owner"
     : /\/voice$/.test(String(input.url || "").split(/[?#]/)[0])
       ? "Check the draft for a finished or still-generating voice note before trying again. Generating another note may incur another charge. If its status is unclear, share the support code with a workspace owner"

@@ -79,6 +79,14 @@
     {
       "path": "/api/cron/brain-audit-retention",
       "schedule": "7 * * * *"
+    },
+    {
+      "path": "/api/cron/lead-cleanse",
+      "schedule": "0 1 * * *"
+    },
+    {
+      "path": "/api/cron/lead-cleanse",
+      "schedule": "0 2 * * *"
     }
   ]
 }

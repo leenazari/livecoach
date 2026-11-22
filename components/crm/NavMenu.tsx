@@ -41,6 +41,15 @@ const BRAIN_CONTROL_ITEM: Item = {
 const PIPELINE_ITEM: Item = { href: "/crm/revenue", label: "Pipeline", icon: "◆" };
 const TASKS_ITEM: Item = { href: "/crm/tasks", label: "Tasks", icon: "☑" };
 const NEW_LEADS_ITEM: Item = { href: '/crm/new-leads', label: 'New leads', icon: '◧' };
+const LEAD_GENERATOR_ITEM: Item = { href: "/crm/lead-generator", label: "Lead generator", icon: "⌕" };
+
+function withLeadGenerator(items: Item[]): Item[] {
+  if (items.some((item) => item.href === LEAD_GENERATOR_ITEM.href)) return items;
+  const next = [...items];
+  const anchor = next.findIndex((item) => item.href === NEW_LEADS_ITEM.href);
+  next.splice(anchor >= 0 ? anchor + 1 : 1, 0, LEAD_GENERATOR_ITEM);
+  return next;
+}
 const MARKETING_ITEM: Item = { href: '/crm/marketing', label: 'Marketing', icon: '◈' };
 const CLIENTS_ITEM: Item = { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" };
 const CALLS_ITEM: Item = { href: "/crm/calls", label: "Calls", icon: "☎" };
@@ -157,9 +166,12 @@ function NavMenuInner({
     : baseCoreItems;
   // Staff need a direct route to their calls too. This changes navigation only,
   // not the owner's private calls-first dashboard preference or call access.
-  const coreItems = callsFirst || salesHome
+  const arrangedItems = callsFirst || salesHome
     ? [homeItem, CALLS_ITEM, ...defaultCoreItems.filter(item => item.href !== homeItem.href && item.href !== CALLS_ITEM.href)]
     : defaultCoreItems;
+  const coreItems = viewerRole === "owner" || viewerRole === "manager"
+    ? withLeadGenerator(arrangedItems)
+    : arrangedItems;
   const moreItems = salesHome
     ? [PLAYBOOK_ITEM, DOCUMENTS_ITEM, COSTS_ITEM, ...MORE_ITEMS]
     : MORE_ITEMS;
@@ -256,6 +268,8 @@ function NavMenuInner({
       return pathname.startsWith("/crm/health");
     if (it.href.startsWith("/crm/outreach"))
       return pathname.startsWith("/crm/outreach");
+    if (it.href === "/crm/lead-generator")
+      return pathname.startsWith("/crm/lead-generator");
     if (it.href === "/crm/calls")
       return pathname.startsWith("/crm/calls") &&
         !pathname.startsWith("/crm/call-coach");
