@@ -2,6 +2,8 @@ import {
   CRITERIA_SET_ID,
   CRITERIA_SET_VERSION,
   LEAD_CAMPAIGN_TAG,
+  gbpToUsd,
+  leadgenUsdToGbpRate,
   normaliseFilters,
   type LeadGeneratorFilters,
 } from "./lead-generator-contract.ts";
@@ -61,9 +63,13 @@ export function weekdayLabel(day: number) {
   return WEEKDAYS.find((item) => item.value === day)?.label || "";
 }
 
-export function formatUsd(value: number | null | undefined) {
+export function formatGbp(value: number | null | undefined) {
   if (value == null || !Number.isFinite(value)) return "Not returned";
-  return `US$${value.toFixed(4)}`;
+  const negative = value < 0;
+  const abs = Math.abs(value);
+  const whole = Math.abs(abs - Math.round(abs)) < 0.001;
+  const shown = abs < 10 && !whole ? abs.toFixed(2) : String(Math.round(abs));
+  return `${negative ? "-" : ""}£${shown}`;
 }
 
 export function safePublicUrl(value: string) {
@@ -190,20 +196,33 @@ export function parseLeadCampaign(
   if (!Number.isInteger(daily) || daily < 0 || daily > 500) {
     return { ok: false, message: "Daily target must be a whole number from 0 to 500." };
   }
-  const budgetRaw = source.monthlyBudgetUsd ?? source.monthly_budget_usd;
-  const budget = budgetRaw == null || budgetRaw === "" ? 0 : Number(budgetRaw);
-  if (!Number.isFinite(budget) || budget < 0 || budget > 100000) {
-    return { ok: false, message: "Monthly budget must be a USD amount from 0 upwards." };
+  const rate = leadgenUsdToGbpRate();
+  const budgetGbp = source.monthlyBudgetGbp ?? source.monthly_budget_gbp;
+  const budgetIsGbp = budgetGbp != null && budgetGbp !== "";
+  const budget = budgetIsGbp
+    ? gbpToUsd(Number(budgetGbp), rate)
+    : source.monthlyBudgetUsd == null || source.monthlyBudgetUsd === ""
+      ? 0
+      : Number(source.monthlyBudgetUsd);
+  const budgetCheck = budgetIsGbp ? Number(budgetGbp) : budget;
+  if (!Number.isFinite(budgetCheck) || budgetCheck < 0 || budgetCheck > 100000 || !Number.isFinite(budget)) {
+    return { ok: false, message: "Monthly budget must be a pound amount from 0 upwards." };
   }
   const totalRaw = source.totalLeadTarget ?? source.total_lead_target;
   const totalLeadTarget = totalRaw == null || totalRaw === "" ? null : Number(totalRaw);
   if (totalLeadTarget != null && (!Number.isInteger(totalLeadTarget) || totalLeadTarget < 1 || totalLeadTarget > 100000)) {
     return { ok: false, message: "Total leads wanted must be a whole number from 1 up, or left blank." };
   }
-  const spendRaw = source.maxSpendUsd ?? source.max_spend_usd;
-  const maxSpendUsd = spendRaw == null || spendRaw === "" ? null : Number(spendRaw);
-  if (maxSpendUsd != null && (!Number.isFinite(maxSpendUsd) || maxSpendUsd < 0 || maxSpendUsd > 1000000)) {
-    return { ok: false, message: "Maximum spend must be a USD amount from 0 up, or left blank." };
+  const spendGbp = source.maxSpendGbp ?? source.max_spend_gbp;
+  const spendIsGbp = spendGbp != null && spendGbp !== "";
+  const maxSpendUsd = spendIsGbp
+    ? gbpToUsd(Number(spendGbp), rate)
+    : source.maxSpendUsd == null || source.maxSpendUsd === ""
+      ? null
+      : Number(source.maxSpendUsd);
+  const spendCheck = spendIsGbp ? Number(spendGbp) : maxSpendUsd;
+  if (spendCheck != null && (!Number.isFinite(spendCheck) || spendCheck < 0 || spendCheck > 1000000)) {
+    return { ok: false, message: "Maximum spend must be a pound amount from 0 up, or left blank." };
   }
   const endRaw = text(source.endDate ?? source.end_date, 10);
   const endStamp = endRaw ? new Date(`${endRaw}T00:00:00Z`) : null;
@@ -227,9 +246,9 @@ export function parseLeadCampaign(
       criteriaSetVersion: CRITERIA_SET_VERSION,
       daysToRun: days,
       dailyTarget: daily,
-      monthlyBudgetUsd: Math.round(budget * 100) / 100,
+      monthlyBudgetUsd: Math.round(budget * 10000) / 10000,
       totalLeadTarget,
-      maxSpendUsd: maxSpendUsd == null ? null : Math.round(maxSpendUsd * 100) / 100,
+      maxSpendUsd: maxSpendUsd == null ? null : Math.round(maxSpendUsd * 10000) / 10000,
       endDate: endRaw || null,
       active: source.active !== false,
       stream,

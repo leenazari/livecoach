@@ -8,8 +8,12 @@
 //        apify_cost_usd, cost_basis, leads[{company, website, domain, rating, reviews, city, phone}]
 //   A cap returns blocked true, empty leads, and a reason. Errors are { error } at 401, 503, or 500.
 // GET /api/admin/lead-generator/cost-estimate
-//   no query and no body. 200 shape is LeadCostEstimate below. Money is 4 decimal places.
+//   no query and no body. 200 shape is LeadCostEstimate below. Money is 4 decimal places in US dollars.
+//   Each campaign has bank (qualified stock) and partials_to_process (legacy partials).
+//   There is no waiting list. Partials are not bank stock.
 //   It prices saved campaigns only.
+// LiveCoach shows those dollars as pounds with leadgenUsdToGbpRate (LEADGEN_USD_TO_GBP, default 0.79)
+// and converts pound inputs back to US dollars before saving.
 // Authorization: Bearer LEADGEN_API_SECRET
 //
 // adam_lead_campaigns columns are CAMPAIGN_COLUMNS.
@@ -75,6 +79,21 @@ export const CRITERIA_SET_VERSION = "1";
 export const CLEANSE_CAMPAIGN = "cleanse";
 export const CLEANSE_CRITERIA_SET = "cleanse";
 export const LIST_PRICE_WEEKS_PER_MONTH = 4.33;
+export const DEFAULT_USD_TO_GBP = 0.79;
+
+export function leadgenUsdToGbpRate(env: NodeJS.ProcessEnv = process.env) {
+  const rate = Number(env.LEADGEN_USD_TO_GBP);
+  if (Number.isFinite(rate) && rate > 0 && rate < 5) return rate;
+  return DEFAULT_USD_TO_GBP;
+}
+
+export function usdToGbp(usd: number, rate = leadgenUsdToGbpRate()) {
+  return usd * rate;
+}
+
+export function gbpToUsd(gbp: number, rate = leadgenUsdToGbpRate()) {
+  return gbp / rate;
+}
 
 export const LEAD_CLEANSE_COLUMNS = [
   "id",
@@ -143,6 +162,8 @@ export type LeadCostCampaign = {
   leadsProduced: number | null;
   spendToDateUsd: number | null;
   remainingSpendUsd: number | null;
+  bank: number | null;
+  partialsToProcess: number | null;
 };
 
 export type LeadCostEstimate = {
@@ -326,6 +347,8 @@ export function parseCostEstimate(payload: unknown): LeadCostEstimate {
         leadsProduced: countOrNull(campaign.leads_produced),
         spendToDateUsd: numberOrNull(campaign.spend_to_date_usd),
         remainingSpendUsd: campaign.remaining_spend_usd == null ? null : numberOrNull(campaign.remaining_spend_usd),
+        bank: countOrNull(campaign.bank),
+        partialsToProcess: countOrNull(campaign.partials_to_process),
       };
     });
   return {

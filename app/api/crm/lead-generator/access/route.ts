@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { LeadGeneratorError } from "@/lib/lead-generator-contract";
+import { LeadGeneratorError, leadgenUsdToGbpRate } from "@/lib/lead-generator-contract";
 import { leadCleanseEnabled } from "@/lib/lead-cleanse-rules";
 import {
   leadGeneratorJson,
@@ -21,6 +21,7 @@ export async function GET() {
         allowed,
         role: scope.role,
         cleanseEnabled: allowed ? leadCleanseEnabled() : false,
+        usdToGbp: leadgenUsdToGbpRate(),
       },
       { headers: leadGeneratorNoStore }
     );
