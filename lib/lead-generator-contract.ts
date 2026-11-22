@@ -43,9 +43,16 @@ export const CAMPAIGN_COLUMNS = [
   "stream",
   "owner_split",
   "notes",
+  "total_lead_target",
+  "max_spend_usd",
+  "end_date",
+  "completed_at",
+  "completed_reason",
   "created_at",
   "updated_at",
 ] as const;
+
+export const SAMPLE_PLACE_CAP = 20;
 
 export const DECISION_COLUMNS = [
   "id",
@@ -133,6 +140,9 @@ export type LeadCostCampaign = {
   estimatedUsd: number | null;
   placesPriced: number | null;
   emailLookupsPriced: number | null;
+  leadsProduced: number | null;
+  spendToDateUsd: number | null;
+  remainingSpendUsd: number | null;
 };
 
 export type LeadCostEstimate = {
@@ -148,7 +158,7 @@ export type LeadCostEstimate = {
     linkedinEmailUsd: number | null;
     placeWithFiltersUsd: number | null;
   };
-  sample10PlacesUsd: number | null;
+  sample20PlacesUsd: number | null;
   campaigns: LeadCostCampaign[];
 };
 
@@ -244,6 +254,17 @@ export function listPriceDailyUsd(
   return Math.round((dailyTarget * 10 * placeWithFiltersUsd + dailyTarget * linkedinEmailUsd) * 10000) / 10000;
 }
 
+export function listPricePerLeadUsd(placeWithFiltersUsd: number, linkedinEmailUsd: number) {
+  if (!Number.isFinite(placeWithFiltersUsd) || !Number.isFinite(linkedinEmailUsd)) return null;
+  return Math.round((10 * placeWithFiltersUsd + linkedinEmailUsd) * 10000) / 10000;
+}
+
+export function leadsAtListPrice(maxSpendUsd: number, placeWithFiltersUsd: number, linkedinEmailUsd: number) {
+  const perLead = listPricePerLeadUsd(placeWithFiltersUsd, linkedinEmailUsd);
+  if (perLead == null || perLead <= 0 || !Number.isFinite(maxSpendUsd) || maxSpendUsd < 0) return null;
+  return Math.floor(maxSpendUsd / perLead + 1e-8);
+}
+
 export function listPriceMonthlyUsd(perDayUsd: number, weekdaysPerWeek: number) {
   if (!Number.isFinite(perDayUsd) || !Number.isInteger(weekdaysPerWeek) || weekdaysPerWeek < 0 || weekdaysPerWeek > 7) {
     return null;
@@ -255,7 +276,7 @@ export function parseSampleResponse(payload: unknown): SampleResult {
   const source = asRecord(payload) || {};
   const leads = (Array.isArray(source.leads) ? source.leads : [])
     .filter((row) => row && typeof row === "object")
-    .slice(0, 10)
+    .slice(0, SAMPLE_PLACE_CAP)
     .map((row) => {
       const lead = row as Record<string, unknown>;
       const reviews = numberOrNull(lead.reviews);
@@ -302,6 +323,9 @@ export function parseCostEstimate(payload: unknown): LeadCostEstimate {
         estimatedUsd: numberOrNull(campaign.estimated_usd),
         placesPriced: countOrNull(campaign.places_priced),
         emailLookupsPriced: countOrNull(campaign.email_lookups_priced),
+        leadsProduced: countOrNull(campaign.leads_produced),
+        spendToDateUsd: numberOrNull(campaign.spend_to_date_usd),
+        remainingSpendUsd: campaign.remaining_spend_usd == null ? null : numberOrNull(campaign.remaining_spend_usd),
       };
     });
   return {
@@ -317,7 +341,7 @@ export function parseCostEstimate(payload: unknown): LeadCostEstimate {
       linkedinEmailUsd: numberOrNull(prices.linkedin_email_usd),
       placeWithFiltersUsd: numberOrNull(prices.place_with_filters_usd),
     },
-    sample10PlacesUsd: numberOrNull(source.sample_10_places_usd),
+    sample20PlacesUsd: numberOrNull(source.sample_20_places_usd),
     campaigns,
   };
 }

@@ -31,6 +31,9 @@ export type LeadCampaignInput = {
   daysToRun: number[];
   dailyTarget: number;
   monthlyBudgetUsd: number;
+  totalLeadTarget: number | null;
+  maxSpendUsd: number | null;
+  endDate: string | null;
   active: boolean;
   stream: LeadStream;
   ownerSplit: OwnerSplit[];
@@ -192,6 +195,21 @@ export function parseLeadCampaign(
   if (!Number.isFinite(budget) || budget < 0 || budget > 100000) {
     return { ok: false, message: "Monthly budget must be a USD amount from 0 upwards." };
   }
+  const totalRaw = source.totalLeadTarget ?? source.total_lead_target;
+  const totalLeadTarget = totalRaw == null || totalRaw === "" ? null : Number(totalRaw);
+  if (totalLeadTarget != null && (!Number.isInteger(totalLeadTarget) || totalLeadTarget < 1 || totalLeadTarget > 100000)) {
+    return { ok: false, message: "Total leads wanted must be a whole number from 1 up, or left blank." };
+  }
+  const spendRaw = source.maxSpendUsd ?? source.max_spend_usd;
+  const maxSpendUsd = spendRaw == null || spendRaw === "" ? null : Number(spendRaw);
+  if (maxSpendUsd != null && (!Number.isFinite(maxSpendUsd) || maxSpendUsd < 0 || maxSpendUsd > 1000000)) {
+    return { ok: false, message: "Maximum spend must be a USD amount from 0 up, or left blank." };
+  }
+  const endRaw = text(source.endDate ?? source.end_date, 10);
+  const endStamp = endRaw ? new Date(`${endRaw}T00:00:00Z`) : null;
+  if (endRaw && (!/^\d{4}-\d{2}-\d{2}$/.test(endRaw) || !endStamp || Number.isNaN(endStamp.getTime()) || endStamp.toISOString().slice(0, 10) !== endRaw)) {
+    return { ok: false, message: "End date must be a calendar date, or left blank." };
+  }
   const stream = String(source.stream || "");
   if (stream !== "sarah_mailer" && stream !== "reps") {
     return { ok: false, message: "Choose Sarah mailer or Reps." };
@@ -210,6 +228,9 @@ export function parseLeadCampaign(
       daysToRun: days,
       dailyTarget: daily,
       monthlyBudgetUsd: Math.round(budget * 100) / 100,
+      totalLeadTarget,
+      maxSpendUsd: maxSpendUsd == null ? null : Math.round(maxSpendUsd * 100) / 100,
+      endDate: endRaw || null,
       active: source.active !== false,
       stream,
       ownerSplit: owners.split,
@@ -229,6 +250,9 @@ export function toCampaignInsert(campaign: LeadCampaignInput, now = new Date().t
     days_to_run: campaign.daysToRun,
     daily_target: campaign.dailyTarget,
     monthly_budget_usd: campaign.monthlyBudgetUsd,
+    total_lead_target: campaign.totalLeadTarget,
+    max_spend_usd: campaign.maxSpendUsd,
+    end_date: campaign.endDate,
     active: campaign.active,
     stream: campaign.stream,
     owner_split: campaign.ownerSplit,
@@ -244,6 +268,9 @@ export function toCampaignUpdate(campaign: LeadCampaignInput, now = new Date().t
     days_to_run: campaign.daysToRun,
     daily_target: campaign.dailyTarget,
     monthly_budget_usd: campaign.monthlyBudgetUsd,
+    total_lead_target: campaign.totalLeadTarget,
+    max_spend_usd: campaign.maxSpendUsd,
+    end_date: campaign.endDate,
     stream: campaign.stream,
     owner_split: campaign.ownerSplit,
     notes: campaign.notes,

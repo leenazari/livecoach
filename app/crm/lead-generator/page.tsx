@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import NavMenu from "@/components/crm/NavMenu";
 import { crmFetch } from "@/lib/crm";
 import {
+  leadsAtListPrice,
   listPriceDailyUsd,
   listPriceMonthlyUsd,
   type LeadCostEstimate,
@@ -49,6 +50,11 @@ type Campaign = {
   daysToRun: number[];
   dailyTarget: number;
   monthlyBudgetUsd: number;
+  totalLeadTarget: number | null;
+  maxSpendUsd: number | null;
+  endDate: string | null;
+  completedAt: string | null;
+  completedReason: string;
   notes: string;
   ownerSplit: { owner: string; daily: number }[];
   filters: {
@@ -80,6 +86,17 @@ const when = (value: string) => {
 
 const blankOwners = () => ({ Lee: "15", Kamm: "15", Sharon: "15" });
 
+function progressLine(campaign: Campaign, estimate: LeadCostEstimate | null) {
+  const row = estimate?.campaigns.find((item) => item.code === campaign.code);
+  const leads = campaign.totalLeadTarget == null
+    ? row?.leadsProduced == null ? "No lead total" : `${row.leadsProduced} leads produced, no total set`
+    : row?.leadsProduced == null ? `Lead progress not loaded of ${campaign.totalLeadTarget}` : `${row.leadsProduced} of ${campaign.totalLeadTarget} leads`;
+  const spend = campaign.maxSpendUsd == null
+    ? row?.spendToDateUsd == null ? "No maximum spend" : `${formatUsd(row.spendToDateUsd)} spent, no maximum`
+    : row?.spendToDateUsd == null ? `Spend not loaded of ${formatUsd(campaign.maxSpendUsd)}` : `${formatUsd(row.spendToDateUsd)} of ${formatUsd(campaign.maxSpendUsd)}`;
+  return `${leads}. ${spend}.`;
+}
+
 export default function LeadGeneratorPage() {
   const [access, setAccess] = useState<{ allowed: boolean; cleanseEnabled?: boolean } | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -95,6 +112,9 @@ export default function LeadGeneratorPage() {
   const [notes, setNotes] = useState("");
   const [dailyTarget, setDailyTarget] = useState("45");
   const [monthlyBudget, setMonthlyBudget] = useState("0");
+  const [totalLeads, setTotalLeads] = useState("");
+  const [maxSpend, setMaxSpend] = useState("");
+  const [endDate, setEndDate] = useState("");
   const [stream, setStream] = useState<LeadStream>("sarah_mailer");
   const [weekdays, setWeekdays] = useState<number[]>([1, 2, 3, 4, 5, 6, 7]);
   const [owners, setOwners] = useState(blankOwners);
@@ -130,6 +150,9 @@ export default function LeadGeneratorPage() {
     daysToRun: weekdays,
     dailyTarget: Number(dailyTarget),
     monthlyBudgetUsd: monthlyBudget === "" ? 0 : Number(monthlyBudget),
+    totalLeadTarget: totalLeads === "" ? null : Number(totalLeads),
+    maxSpendUsd: maxSpend === "" ? null : Number(maxSpend),
+    endDate: endDate || null,
     stream,
     active: true,
     ownerSplit: stream === "reps" ? ownerSplit : [],
@@ -145,6 +168,9 @@ export default function LeadGeneratorPage() {
       )
     : null;
   const listMonth = listDay == null ? null : listPriceMonthlyUsd(listDay, weekdays.length);
+  const leadsForSpend = estimate && maxSpend !== ""
+    ? leadsAtListPrice(Number(maxSpend), estimate.listPrices.placeWithFiltersUsd ?? Number.NaN, estimate.listPrices.linkedinEmailUsd ?? Number.NaN)
+    : null;
   const savedEstimate = estimate?.campaigns.find((row) => row.code === editingCode);
 
   useEffect(() => {
@@ -274,6 +300,9 @@ export default function LeadGeneratorPage() {
     setNotes(campaign.notes);
     setDailyTarget(String(campaign.dailyTarget));
     setMonthlyBudget(String(campaign.monthlyBudgetUsd));
+    setTotalLeads(campaign.totalLeadTarget == null ? "" : String(campaign.totalLeadTarget));
+    setMaxSpend(campaign.maxSpendUsd == null ? "" : String(campaign.maxSpendUsd));
+    setEndDate(campaign.endDate || "");
     setStream(campaign.stream === "reps" ? "reps" : "sarah_mailer");
     setWeekdays(campaign.daysToRun.length ? campaign.daysToRun : [1, 2, 3, 4, 5, 6, 7]);
     const next = blankOwners();
@@ -366,7 +395,7 @@ export default function LeadGeneratorPage() {
                     <dl className="mt-2 space-y-1">
                       <div className="flex justify-between gap-3"><dt>Basis</dt><dd>{estimate.basis === "actual" ? "Actual" : estimate.basis === "list" ? "List price" : "Not returned"}</dd></div>
                       <div className="flex justify-between gap-3"><dt>Days of data</dt><dd>{estimate.daysOfData ?? "Not returned"}</dd></div>
-                      <div className="flex justify-between gap-3"><dt>Sample of 10 places</dt><dd>{formatUsd(estimate.sample10PlacesUsd)}</dd></div>
+                      <div className="flex justify-between gap-3"><dt>Sample of 20 places</dt><dd>{formatUsd(estimate.sample20PlacesUsd)}</dd></div>
                       <div className="flex justify-between gap-3"><dt>Per qualified lead</dt><dd>{formatUsd(estimate.usdPerQualified)}</dd></div>
                       <div className="flex justify-between gap-3"><dt>This form per day</dt><dd>{formatUsd(listDay)}</dd></div>
                       <div className="flex justify-between gap-3"><dt>This form per month</dt><dd>{formatUsd(listMonth)}</dd></div>
@@ -379,6 +408,17 @@ export default function LeadGeneratorPage() {
                   {busy === "sample" ? "Running sample…" : "Run sample"}
                 </button>
                 <h2 className="mt-6 text-sm font-semibold">{editingId ? "Edit campaign" : "Save as campaign"}</h2>
+                <p className="mt-2 text-xs text-muted">Runs every morning until it reaches the total, the maximum spend, or the end date, whichever comes first.</p>
+                <label className="mt-3 block text-xs text-muted">Maximum spend (USD), recommended
+                  <input className={`${field} mt-1`} inputMode="decimal" value={maxSpend} onChange={(event) => setMaxSpend(event.target.value)} placeholder="Leave blank for no lifetime cap" />
+                </label>
+                {maxSpend !== "" && <p className="mt-1 text-xs text-muted">At list prices this spend covers about {leadsForSpend == null ? "an unknown number of" : leadsForSpend} leads.</p>}
+                <label className="mt-3 block text-xs text-muted">Total leads wanted
+                  <input className={`${field} mt-1`} inputMode="numeric" value={totalLeads} onChange={(event) => setTotalLeads(event.target.value)} placeholder="Leave blank for no lead total" />
+                </label>
+                <label className="mt-3 block text-xs text-muted">End date, optional
+                  <input className={`${field} mt-1`} type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+                </label>
                 <label className="mt-3 block text-xs text-muted">Name
                   <input className={`${field} mt-1`} value={name} maxLength={80} onChange={(event) => setName(event.target.value)} />
                 </label>
@@ -456,7 +496,7 @@ export default function LeadGeneratorPage() {
                               <td className="px-3 py-3">{lead.phone}</td>
                             </tr>
                           );
-                        }) : <tr><td colSpan={7} className="px-4 py-10 text-sm text-muted">Run a sample to see up to 10 places, whether it was blocked, and what was not applied.</td></tr>}
+                        }) : <tr><td colSpan={7} className="px-4 py-10 text-sm text-muted">Run a sample to see up to 20 places, whether it was blocked, and what was not applied.</td></tr>}
                       </tbody>
                     </table>
                   </div>
@@ -469,7 +509,9 @@ export default function LeadGeneratorPage() {
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <h3 className="font-semibold">{campaign.name}</h3>
-                          <p className="mt-1 text-xs text-muted">{campaign.code} · {streamLabel(campaign.stream)} · {campaign.active ? "Active" : "Inactive"} · {campaign.dailyTarget} a day · {campaign.daysToRun.map(weekdayLabel).filter(Boolean).join(", ") || "No weekdays"} · Budget {formatUsd(campaign.monthlyBudgetUsd)}</p>
+                          <p className="mt-1 text-xs text-muted">{campaign.code} · {streamLabel(campaign.stream)} · {campaign.completedAt ? "Completed" : campaign.active ? "Active" : "Inactive"} · {campaign.dailyTarget} a day · {campaign.daysToRun.map(weekdayLabel).filter(Boolean).join(", ") || "No weekdays"} · Budget {formatUsd(campaign.monthlyBudgetUsd)}</p>
+                          <p className="mt-1 text-xs text-muted">{progressLine(campaign, estimate)}</p>
+                          {campaign.completedAt && <p className="mt-1 text-xs text-sage">Completed. {campaign.completedReason || "No reason recorded."}</p>}
                           <p className="mt-1 text-xs text-muted">Spend in the decisions below: {formatUsd(campaign.recentSpendUsd)}</p>
                           {campaign.stream === "reps" && <p className="mt-1 text-xs text-muted">{campaign.ownerSplit.map((row) => `${row.owner} ${row.daily}`).join(", ") || "No rep split"}</p>}
                         </div>

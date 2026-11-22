@@ -9,6 +9,7 @@ import {
   LEAD_BANK_TABLES,
   LEAD_GENERATOR_PATHS,
   assertLeadGeneratorOrigin,
+  leadsAtListPrice,
   listPriceDailyUsd,
   listPriceMonthlyUsd,
   parseCostEstimate,
@@ -121,6 +122,9 @@ assert.equal(LEAD_GENERATOR_PATHS.sample, "/api/admin/lead-generator/sample");
 assert.equal(LEAD_GENERATOR_PATHS.costEstimate, "/api/admin/lead-generator/cost-estimate");
 assert.equal(listPriceDailyUsd(45, 0.006, 0.01), 3.15);
 assert.equal(listPriceMonthlyUsd(3.15, 7), 95.4765);
+assert.equal(leadsAtListPrice(7, 0.006, 0.01), 100);
+assert.equal(parseLeadCampaign({ ...saved.campaign, maxSpendUsd: -1 }).ok, false);
+assert.equal(parseLeadCampaign({ ...saved.campaign, endDate: "2026-13-40" }).ok, false);
 
 const secret = "test-secret-value";
 let seen = null;
@@ -164,13 +168,15 @@ const estimate = parseCostEstimate({
   days_of_data: 2,
   usd_per_qualified: null,
   list_prices: { checked: "2026-11-22", source: "https://apify.com/example", maps_place_usd: 0.004, maps_filter_usd: 0.001, maps_filters_applied: 2, linkedin_email_usd: 0.01, place_with_filters_usd: 0.006 },
-  sample_10_places_usd: 0.06,
-  campaigns: [{ code: "C1-sarah", name: "Sarah", stream: "sarah_mailer", daily_target: 45, estimated_usd: 3.15, places_priced: 450, email_lookups_priced: 45 }],
+  sample_20_places_usd: 0.12,
+  campaigns: [{ code: "C1-sarah", name: "Sarah", stream: "sarah_mailer", daily_target: 45, estimated_usd: 3.15, places_priced: 450, email_lookups_priced: 45, leads_produced: 4, spend_to_date_usd: 1.2, remaining_spend_usd: null }],
 });
 assert.equal(estimate.basis, "list");
 assert.equal(estimate.usdPerQualified, null);
-assert.equal(estimate.sample10PlacesUsd, 0.06);
+assert.equal(estimate.sample20PlacesUsd, 0.12);
 assert.equal(estimate.campaigns[0].estimatedUsd, 3.15);
+assert.equal(estimate.campaigns[0].leadsProduced, 4);
+assert.equal(estimate.campaigns[0].remainingSpendUsd, null);
 assert.equal(estimate.listPrices.placeWithFiltersUsd, 0.006);
 
 assert.throws(() => assertLeadGeneratorOrigin("http://example.com", secret), /origin/);
@@ -309,6 +315,10 @@ assert.match(nav, /viewerRole === "owner" \|\| viewerRole === "manager"/);
 assert.match(nav, /\/crm\/lead-generator/);
 assert.match(page, /Coming soon/);
 assert.match(page, /estimate at list prices/);
+assert.match(page, /Maximum spend \(USD\), recommended/);
+assert.match(page, /whichever comes first/);
+assert.match(page, /up to 20 places/);
+assert.match(page, /Completed/);
 assert.match(page, /WEEKDAYS/);
 assert.match(read("lib/lead-generator-rules.ts"), /Monday/);
 assert.match(read("app/api/crm/lead-generator/cost-estimate/route.ts"), /fetchLeadCostEstimate\(\)/);

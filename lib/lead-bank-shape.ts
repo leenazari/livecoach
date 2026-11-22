@@ -27,6 +27,11 @@ export type PublicCampaign = {
   daysToRun: number[];
   dailyTarget: number;
   monthlyBudgetUsd: number;
+  totalLeadTarget: number | null;
+  maxSpendUsd: number | null;
+  endDate: string | null;
+  completedAt: string | null;
+  completedReason: string;
   active: boolean;
   stream: string;
   ownerSplit: OwnerSplit[];
@@ -119,6 +124,11 @@ export function toPublicCampaign(row: unknown): PublicCampaign | null {
     daysToRun: weekdays(source.days_to_run),
     dailyTarget: whole(source.daily_target),
     monthlyBudgetUsd: money(source.monthly_budget_usd),
+    totalLeadTarget: source.total_lead_target == null || source.total_lead_target === "" ? null : whole(source.total_lead_target),
+    maxSpendUsd: source.max_spend_usd == null || source.max_spend_usd === "" ? null : money(source.max_spend_usd),
+    endDate: source.end_date ? String(source.end_date).slice(0, 10) : null,
+    completedAt: source.completed_at ? String(source.completed_at) : null,
+    completedReason: String(source.completed_reason || "").replace(/\s+/g, " ").trim().slice(0, 280),
     active: source.active !== false,
     stream: String(source.stream || ""),
     ownerSplit: ownerSplit(source.owner_split),
@@ -159,8 +169,11 @@ export const CAMPAIGN_INSERT_KEYS = [
   "daily_target",
   "days_to_run",
   "filters",
+  "end_date",
+  "max_spend_usd",
   "monthly_budget_usd",
   "name",
+  "total_lead_target",
   "notes",
   "owner_split",
   "stream",
