@@ -13,6 +13,7 @@ import {
   pipelineStatusForStage,
 } from "@/lib/pipeline-entry";
 import PipelineWorkspace from "@/components/crm/PipelineWorkspace";
+import SalesJourneySwitch from "@/components/crm/SalesJourneySwitch";
 import OutlookIntelligencePanel, { type SignalHealth } from "@/components/crm/OutlookIntelligencePanel";
 import MetricDrilldown from "@/components/crm/MetricDrilldown";
 import { opportunityMatchesOwner } from "@/lib/opportunity-owner-filter";
@@ -415,6 +416,7 @@ export default function RevenuePage() {
   return (
     <main className="relative z-10 mx-auto max-w-[1220px] px-3 py-5 sm:px-5 sm:py-9">
       <NavMenu />
+      <SalesJourneySwitch active="pipeline" />
       <header className="mb-4 flex items-start justify-between gap-3 border-b border-edge pb-4">
         <div>
           <h1 className="font-display text-[1.55rem] tracking-tight text-bone"><span className="italic text-amber">Opportunities</span> and pipeline</h1>

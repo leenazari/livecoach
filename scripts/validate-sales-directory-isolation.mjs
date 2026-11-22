@@ -21,34 +21,36 @@ for (const [name, source, userId] of [
   assert.match(
     source,
     new RegExp(
-      `if \\(!canManageAssignments\\) \\{[\\s\\S]*?membersQuery = membersQuery\\.eq\\(\"user_id\", ${userId.replaceAll(".", "\\.")}\\)`
+      `if \\(!canManageAssignments(?: && !canCoverTeamLeads)?\\) \\{[\\s\\S]*?membersQuery = membersQuery\\.eq\\(\"user_id\", ${userId.replaceAll(".", "\\.")}\\)`
     ),
-    `${name} must query only the signed-in directory entry for a sales user`
+    `${name} must query only the signed-in directory entry unless owner-enabled team lead cover is verified`
   );
 }
 
 assert.match(
   revenuePage,
-  /const activeOwnerFilter = data\?\.canManageAssignments[\s\S]*?: "mine"/,
+  /const activeOwnerFilter = \(data\?\.canManageAssignments \|\| data\?\.canCoverTeamLeads\)[\s\S]*?: "mine"/,
   "A sales user cannot restore another owner's filter through stale client state"
 );
 
 assert.match(
   pipeline,
-  /const effectiveOwnerFilter = canManageAssignments \? ownerFilter : "mine"/,
+  /const effectiveOwnerFilter = canViewTeam \? ownerFilter : "mine"/,
   "The pipeline must fail closed to the signed-in user's work"
 );
-assert.match(pipeline, /canManageAssignments \? \([\s\S]*?aria-label="Filter pipeline by deal owner"/);
+assert.match(pipeline, /canViewTeam \? \([\s\S]*?aria-label="Filter pipeline by deal owner"/);
 assert.match(pipeline, />\s*My work only\s*<\/div>/);
 assert.match(pipeline, /: "Another team member"/);
 
 assert.match(
   portfolio,
-  /const effectiveOwnerFilter = canManageAssignments \? ownerFilter : "mine"/,
+  /const effectiveOwnerFilter = canViewTeam \? ownerFilter : "mine"/,
   "The client list must fail closed to the signed-in user's work"
 );
-assert.match(portfolio, /canManageAssignments \? \([\s\S]*?aria-label="Filter clients by sales owner"/);
+assert.match(portfolio, /canViewTeam \? \([\s\S]*?aria-label="Filter clients by sales owner"/);
 assert.match(portfolio, />\s*My clients only\s*<\/div>/);
 assert.match(portfolio, /: "Another team member"/);
 
-console.log("Sales directory isolation checks passed");
+assert.match(pipeline, /const canViewTeam = canManageAssignments \|\| props\.canCoverTeamLeads === true/);
+assert.match(portfolio, /const canViewTeam = canManageAssignments \|\| canCoverTeamLeads/);
+console.log("Sales directory isolation checks passed, including explicit team-cover gates");

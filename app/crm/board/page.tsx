@@ -63,7 +63,7 @@ type Tab = "drafts" | "opportunities" | "clients";
 const TABS: { key: Tab; label: string }[] = [
   { key: "drafts", label: "Drafts" },
   { key: "opportunities", label: "Opportunities" },
-  { key: "clients", label: "Clients" },
+  { key: "clients", label: "Companies" },
 ];
 
 function BoardInner() {

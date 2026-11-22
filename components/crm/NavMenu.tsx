@@ -47,11 +47,11 @@ function withLeadGenerator(items: Item[]): Item[] {
   if (items.some((item) => item.href === LEAD_GENERATOR_ITEM.href)) return items;
   const next = [...items];
   const anchor = next.findIndex((item) => item.href === NEW_LEADS_ITEM.href);
-  next.splice(anchor >= 0 ? anchor + 1 : 1, 0, LEAD_GENERATOR_ITEM);
+  next.splice(anchor >= 0 ? anchor : 1, 0, LEAD_GENERATOR_ITEM);
   return next;
 }
 const MARKETING_ITEM: Item = { href: '/crm/marketing', label: 'Marketing', icon: '◈' };
-const CLIENTS_ITEM: Item = { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" };
+const CLIENTS_ITEM: Item = { href: "/crm/board?tab=clients", label: "Companies", icon: "◴", tab: "clients" };
 const CALLS_ITEM: Item = { href: "/crm/calls", label: "Calls", icon: "☎" };
 const PLAYBOOK_ITEM: Item = { href: "/crm/pitch-playbook", label: "Sales knowledge", icon: "◇" };
 const COSTS_ITEM: Item = { href: "/crm/costs", label: "Costs", icon: "£" };
@@ -162,7 +162,7 @@ function NavMenuInner({
   // Assigned leads are available to every active member. Inbound review remains
   // separately gated inside the page and API.
   const defaultCoreItems = (viewerRole !== null || inboundNavigation)
-    ? [baseCoreItems[0], NEW_LEADS_ITEM, ...baseCoreItems.slice(1)]
+    ? [baseCoreItems[0], NEW_LEADS_ITEM, PIPELINE_ITEM, ...baseCoreItems.slice(1).filter(item => item.href !== PIPELINE_ITEM.href)]
     : baseCoreItems;
   // Staff need a direct route to their calls too. This changes navigation only,
   // not the owner's private calls-first dashboard preference or call access.

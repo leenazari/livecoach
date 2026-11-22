@@ -74,6 +74,7 @@ for(const role of ['sales','manager']) {
       assert.equal(document.querySelectorAll('a[href="/crm/calls"][aria-current="page"]').length,1,'Calls is highlighted on its own page');
       assert.ok(hrefs.includes(home),'Keep the member-specific home');
       assert.ok(hrefs.includes('/crm/tasks'),'Tasks remain directly accessible');
+      if(!phone) assert.equal(hrefs[hrefs.indexOf('/crm/new-leads')+1],'/crm/revenue','Keep New leads adjacent to Pipeline');
       if(phone) assert.ok(hrefs.includes('/crm/outreach?tab=prospects'),'Outreach remains directly accessible on mobile');
       else {
         assert.equal(hrefs[hrefs.indexOf(home)+1],'/crm/calls','Place Calls immediately after Today');

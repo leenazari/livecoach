@@ -151,7 +151,7 @@ export async function GET(req: NextRequest) {
       for (const row of rows || []) if ((row as any).company_id) companyIds.add((row as any).company_id);
     let linkedCompanyQuery: any = supabaseAdmin
       .from("companies")
-      .select("id, name")
+      .select("id, name, domain")
       .eq("workspace_id", scope.workspaceId);
     if (scope.role !== "owner")
       linkedCompanyQuery = linkedCompanyQuery.eq("owner_id", scope.userId);
@@ -180,7 +180,7 @@ export async function GET(req: NextRequest) {
     const companyName = new Map(
       [...(ownedLinkedCompanies || []), ...safeLinkedCompanies].map((c: any) => [
         c.id,
-        c.name,
+        `${c.name}${c.domain ? ` (${c.domain})` : ""}`,
       ])
     );
 
@@ -206,7 +206,7 @@ export async function GET(req: NextRequest) {
         id: `contact:${c.id}`,
         type: "contact",
         label: c.name,
-        detail: compact([c.role, c.email, companyName.get(c.company_id), c.notes].filter(Boolean).join(" · ")),
+        detail: compact([companyName.get(c.company_id), c.email, c.role, c.notes].filter(Boolean).join(" · ")),
         href: c.company_id ? `/crm/${c.company_id}` : "/crm/board?tab=clients",
       });
     for (const c of callRows)

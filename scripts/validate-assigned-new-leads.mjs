@@ -50,6 +50,7 @@ let viewer = { workspaceId: 'workspace', userId: 'kam', role: 'sales', status: '
 const company = (id, overrides = {}) => ({ id, workspace_id: 'workspace', name: id, is_confidential: false, imported_lead: { ...mapped.importedLead, contactIds: ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'], notes: 'Permitted source notes' }, profile: { private: 'HIDDEN_PROFILE' }, notes: 'HIDDEN_NOTES', email_context: 'HIDDEN_EMAIL', ...overrides });
 const share = (company_id, user = 'kam', overrides = {}) => ({ company_id, workspace_id: 'workspace', status: 'active', assigned_to_user_id: user, ...overrides });
 const db = {
+  sales_lead_sources: [{company_id:"kam-lead",workspace_id:"workspace",campaign:"C1",criteria_version:"v1",activity:{page_view:"2026-11-22T10:00:00Z"},opportunity_id:"deal-kam"}, {company_id:"sharon-lead",workspace_id:"workspace",campaign:"PRIVATE_OTHER",activity:{}}],
   workspace_members: ['kam', 'sharon', 'lee', 'nikhara'].map(user_id => ({ user_id, workspace_id: 'workspace', role: user_id === 'lee' ? 'owner' : 'sales', status: 'active' })),
   team_client_shares: [share('kam-lead'), share('sharon-lead', 'sharon'), share('nikhara-lead', 'nikhara'), share('confidential'), share('investor'), share('internal'), share('archived'), share('revoked', 'kam', { status: 'revoked' }), share('foreign', 'kam', { workspace_id: 'foreign' })],
   companies: [company('kam-lead'), company('sharon-lead'), company('nikhara-lead'), company('confidential', { is_confidential: true }), company('investor', { classification: 'investor' }), company('internal', { internal: true }), company('archived', { archived: true }), company('revoked'), company('foreign', { workspace_id: 'foreign' })],
@@ -78,6 +79,7 @@ for (const id of ['kam', 'sharon', 'nikhara']) {
   const result = await loader.loadAssignedNewLeads();
   assert.deepEqual(Array.from(result.leads, l => l.id), [`${id}-lead`]);
   assert.doesNotMatch(JSON.stringify(result), /HIDDEN_/);
+  if (id==='kam') { assert.equal(result.leads[0].campaign,'C1'); assert.equal(result.leads[0].opportunityId,'deal-kam'); assert.doesNotMatch(JSON.stringify(result),/PRIVATE_OTHER/); }
 }
 viewer = { ...viewer, userId: 'kam', role: 'owner' };
 assert.equal((await loader.loadAssignedNewLeads()).leads.length, 1, 'Stale owner claim cannot grant broad access');
@@ -93,7 +95,7 @@ for (const status of ['removed', 'suspended', 'onboarding']) {
   assert.deepEqual(reads, ['workspace_members']);
 }
 db.workspace_members[0].status = 'active';
-for (const table of ['workspace_members', 'team_client_shares', 'companies', 'contacts', 'profiles']) {
+for (const table of ['workspace_members', 'team_client_shares', 'companies', 'contacts', 'profiles', 'sales_lead_sources']) {
   failTable = table; await assert.rejects(loader.loadAssignedNewLeads(), /read failed/);
 }
 failTable = '';
