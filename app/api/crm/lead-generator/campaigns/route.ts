@@ -30,11 +30,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => null);
     const parsed = parseLeadCampaign(body);
     if (!parsed.ok) throw leadGeneratorInvalid(parsed.message);
-    const estimate = await fetchLeadCostEstimate({
-      filters: parsed.campaign.filters,
-      daysToRun: parsed.campaign.daysToRun,
-      dailyLeadTarget: parsed.campaign.dailyLeadTarget,
-    });
+    const estimate = await fetchLeadCostEstimate();
     const campaign = await createLeadCampaign(parsed.campaign);
     return NextResponse.json(
       { campaign, estimate, saved: true },

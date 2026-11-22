@@ -1,17 +1,41 @@
-import type { LeadGeneratorFilters } from "./lead-generator-contract.ts";
+import {
+  CRITERIA_SET_ID,
+  CRITERIA_SET_VERSION,
+  LEAD_CAMPAIGN_TAG,
+  normaliseFilters,
+  type LeadGeneratorFilters,
+} from "./lead-generator-contract.ts";
 
+export const REP_OWNERS = ["Lee", "Kamm", "Sharon"] as const;
+export type RepOwner = (typeof REP_OWNERS)[number];
 export type LeadStream = "sarah_mailer" | "reps";
+export type OwnerSplit = { owner: RepOwner; daily: number };
+
+export const WEEKDAYS = [
+  { value: 1, label: "Monday" },
+  { value: 2, label: "Tuesday" },
+  { value: 3, label: "Wednesday" },
+  { value: 4, label: "Thursday" },
+  { value: 5, label: "Friday" },
+  { value: 6, label: "Saturday" },
+  { value: 7, label: "Sunday" },
+] as const;
 
 export type LeadCampaignInput = {
+  code: string;
   name: string;
-  daysToRun: number;
-  dailyLeadTarget: number;
-  monthlyBudgetUsd: number | null;
-  stream: LeadStream;
+  campaign: string;
   filters: LeadGeneratorFilters;
+  criteriaSetId: string;
+  criteriaSetVersion: string;
+  daysToRun: number[];
+  dailyTarget: number;
+  monthlyBudgetUsd: number;
+  active: boolean;
+  stream: LeadStream;
+  ownerSplit: OwnerSplit[];
+  notes: string;
 };
-
-const STREAMS = new Set<LeadStream>(["sarah_mailer", "reps"]);
 
 const text = (value: unknown, max: number) =>
   String(value ?? "")
@@ -19,13 +43,6 @@ const text = (value: unknown, max: number) =>
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, max);
-
-const optionalNumber = (value: unknown) => {
-  if (value == null || value === "") return { ok: true as const, value: null };
-  const amount = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(amount)) return { ok: false as const };
-  return { ok: true as const, value: amount };
-};
 
 export function canManageLeadGenerator(role: string, status: string) {
   return status === "active" && (role === "owner" || role === "manager");
@@ -37,10 +54,13 @@ export function streamLabel(stream: string) {
   return "Unknown stream";
 }
 
+export function weekdayLabel(day: number) {
+  return WEEKDAYS.find((item) => item.value === day)?.label || "";
+}
+
 export function formatUsd(value: number | null | undefined) {
   if (value == null || !Number.isFinite(value)) return "Not returned";
-  const digits = Math.abs(value) > 0 && Math.abs(value) < 1 ? 4 : 2;
-  return `US$${value.toFixed(digits)}`;
+  return `US$${value.toFixed(4)}`;
 }
 
 export function safePublicUrl(value: string) {
@@ -54,93 +74,165 @@ export function safePublicUrl(value: string) {
   }
 }
 
+export function campaignCodeFromName(name: string) {
+  return text(name, 80)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+}
+
+export function notAppliedLabel(key: string) {
+  if (key === "opening_hours") return "opening hours";
+  if (key === "category_tags") return "category tags";
+  if (key === "phone_present") return "phone number present";
+  return key.replace(/_/g, " ");
+}
+
 export function parseLeadFilters(
   input: unknown
 ): { ok: true; filters: LeadGeneratorFilters } | { ok: false; message: string } {
-  const source = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
-  const sector = text(source.sector ?? source.search, 120);
-  const city = text(source.city ?? source.area, 120);
-  if (sector.length < 2 && city.length < 2) {
-    return { ok: false, message: "Add a sector or a city of at least 2 characters." };
+  const record = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const nested = record.filters && typeof record.filters === "object" && !Array.isArray(record.filters)
+    ? (record.filters as Record<string, unknown>)
+    : record;
+  for (const [key, label] of [
+    ["min_reviews", "Minimum reviews"],
+    ["minReviews", "Minimum reviews"],
+    ["max_reviews", "Maximum reviews"],
+    ["maxReviews", "Maximum reviews"],
+  ] as const) {
+    const value = nested[key];
+    if (value == null || value === "") continue;
+    const amount = Number(value);
+    if (!Number.isInteger(amount) || amount < 0 || amount > 100000) {
+      return { ok: false, message: `${label} must be a whole number from 0 to 100000, or left blank.` };
+    }
   }
-  const rating = optionalNumber(source.minRating);
-  if (!rating.ok || (rating.value != null && (rating.value < 1 || rating.value > 5))) {
-    return { ok: false, message: "Minimum Google rating must be between 1 and 5, or left blank." };
+  const filters = normaliseFilters(input);
+  if (
+    filters.min_rating != null &&
+    (filters.min_rating < 0 || filters.min_rating > 5)
+  ) {
+    return { ok: false, message: "Minimum Google rating must be between 0 and 5, or left blank." };
   }
-  const minReviews = optionalNumber(source.minReviews);
-  const maxReviews = optionalNumber(source.maxReviews);
-  const review = (parsed: { ok: boolean; value?: number | null }) => {
-    if (!parsed.ok || parsed.value == null) return parsed.ok ? null : undefined;
-    if (!Number.isInteger(parsed.value) || parsed.value < 0 || parsed.value > 100000) return undefined;
-    return parsed.value;
-  };
-  const minimum = review(minReviews);
-  const maximum = review(maxReviews);
-  if (minimum === undefined || maximum === undefined) {
-    return { ok: false, message: "Review counts must be whole numbers from 0 to 100000, or left blank." };
+  for (const [value, label] of [
+    [filters.min_reviews, "Minimum reviews"],
+    [filters.max_reviews, "Maximum reviews"],
+  ] as const) {
+    if (value != null && (!Number.isInteger(value) || value < 0 || value > 100000)) {
+      return { ok: false, message: `${label} must be a whole number from 0 to 100000, or left blank.` };
+    }
   }
-  if (minimum != null && maximum != null && minimum > maximum) {
+  if (filters.min_reviews != null && filters.max_reviews != null && filters.min_reviews > filters.max_reviews) {
     return { ok: false, message: "The minimum review count cannot be higher than the maximum." };
   }
   return {
     ok: true,
     filters: {
-      sector,
-      city,
-      minRating: rating.value == null ? null : Math.round(rating.value * 10) / 10,
-      minReviews: minimum,
-      maxReviews: maximum,
-      mustHaveWebsite: source.mustHaveWebsite !== false && source.mustHaveWebsite !== "false",
+      ...filters,
+      min_rating: filters.min_rating == null ? null : Math.round(filters.min_rating * 10) / 10,
+      opening_hours: null,
+      category_tags: [],
     },
   };
 }
 
+function parseWeekdays(value: unknown) {
+  if (!Array.isArray(value) || !value.length) return null;
+  const days = Array.from(new Set(value.map((day) => Number(day))));
+  if (days.some((day) => !Number.isInteger(day) || day < 1 || day > 7)) return null;
+  return days.sort((a, b) => a - b);
+}
+
+function parseOwnerSplit(stream: LeadStream, value: unknown) {
+  if (stream === "sarah_mailer") return { ok: true as const, split: [] as OwnerSplit[] };
+  if (!Array.isArray(value)) return { ok: false as const, message: "Add a daily split for Lee, Kamm, or Sharon." };
+  const split: OwnerSplit[] = [];
+  for (const row of value) {
+    if (!row || typeof row !== "object") return { ok: false as const, message: "The rep split is not valid." };
+    const owner = String((row as { owner?: unknown }).owner || "");
+    if (owner.toLowerCase() === "nikhara") {
+      return { ok: false as const, message: "Nikhara is never a rep owner." };
+    }
+    if (!REP_OWNERS.includes(owner as RepOwner)) {
+      return { ok: false as const, message: "Rep owners are Lee, Kamm, and Sharon." };
+    }
+    const daily = Number((row as { daily?: unknown }).daily);
+    if (!Number.isInteger(daily) || daily < 0 || daily > 200) {
+      return { ok: false as const, message: "Each rep daily number must be a whole number from 0 to 200." };
+    }
+    if (daily > 0) split.push({ owner: owner as RepOwner, daily });
+  }
+  if (!split.length) return { ok: false as const, message: "Give Lee, Kamm, or Sharon a daily number above 0." };
+  return { ok: true as const, split };
+}
+
 export function parseLeadCampaign(
-  input: unknown
+  input: unknown,
+  existingCode?: string
 ): { ok: true; campaign: LeadCampaignInput } | { ok: false; message: string } {
   const source = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const filters = parseLeadFilters(source.filters ?? source);
   if (!filters.ok) return filters;
   const name = text(source.name, 80);
   if (name.length < 2) return { ok: false, message: "Give the campaign a name of at least 2 characters." };
-  const days = Number(source.daysToRun);
-  if (!Number.isInteger(days) || days < 1 || days > 90) {
-    return { ok: false, message: "Days to run must be a whole number from 1 to 90." };
+  const code = existingCode || campaignCodeFromName(text(source.code, 48) || name);
+  if (!/^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(code)) {
+    return { ok: false, message: "The campaign code needs letters or numbers. Change the name and try again." };
   }
-  const daily = Number(source.dailyLeadTarget);
-  if (!Number.isInteger(daily) || daily < 1 || daily > 200) {
-    return { ok: false, message: "Daily lead target must be a whole number from 1 to 200." };
+  const days = parseWeekdays(source.daysToRun ?? source.days_to_run);
+  if (!days) return { ok: false, message: "Choose at least one weekday. Monday is 1 and Sunday is 7." };
+  const daily = Number(source.dailyTarget ?? source.daily_target);
+  if (!Number.isInteger(daily) || daily < 0 || daily > 500) {
+    return { ok: false, message: "Daily target must be a whole number from 0 to 500." };
   }
-  const budget = optionalNumber(source.monthlyBudgetUsd);
-  if (!budget.ok || (budget.value != null && (budget.value <= 0 || budget.value > 20000))) {
-    return { ok: false, message: "Monthly budget must be blank, or a USD amount up to 20000." };
+  const budgetRaw = source.monthlyBudgetUsd ?? source.monthly_budget_usd;
+  const budget = budgetRaw == null || budgetRaw === "" ? 0 : Number(budgetRaw);
+  if (!Number.isFinite(budget) || budget < 0 || budget > 100000) {
+    return { ok: false, message: "Monthly budget must be a USD amount from 0 upwards." };
   }
   const stream = String(source.stream || "");
-  if (!STREAMS.has(stream as LeadStream)) {
+  if (stream !== "sarah_mailer" && stream !== "reps") {
     return { ok: false, message: "Choose Sarah mailer or Reps." };
   }
+  const owners = parseOwnerSplit(stream, source.ownerSplit ?? source.owner_split);
+  if (!owners.ok) return owners;
   return {
     ok: true,
     campaign: {
+      code,
       name,
-      daysToRun: days,
-      dailyLeadTarget: daily,
-      monthlyBudgetUsd: budget.value == null ? null : Math.round(budget.value * 100) / 100,
-      stream: stream as LeadStream,
+      campaign: LEAD_CAMPAIGN_TAG,
       filters: filters.filters,
+      criteriaSetId: CRITERIA_SET_ID,
+      criteriaSetVersion: CRITERIA_SET_VERSION,
+      daysToRun: days,
+      dailyTarget: daily,
+      monthlyBudgetUsd: Math.round(budget * 100) / 100,
+      active: source.active !== false,
+      stream,
+      ownerSplit: owners.split,
+      notes: text(source.notes, 500),
     },
   };
 }
 
 export function toCampaignInsert(campaign: LeadCampaignInput, now = new Date().toISOString()) {
   return {
+    code: campaign.code,
     name: campaign.name,
-    status: "active" as const,
-    stream: campaign.stream,
-    days_to_run: campaign.daysToRun,
-    daily_lead_target: campaign.dailyLeadTarget,
-    monthly_budget_usd: campaign.monthlyBudgetUsd,
+    campaign: campaign.campaign,
     filters: campaign.filters,
+    criteria_set_id: campaign.criteriaSetId,
+    criteria_set_version: campaign.criteriaSetVersion,
+    days_to_run: campaign.daysToRun,
+    daily_target: campaign.dailyTarget,
+    monthly_budget_usd: campaign.monthlyBudgetUsd,
+    active: campaign.active,
+    stream: campaign.stream,
+    owner_split: campaign.ownerSplit,
+    notes: campaign.notes,
     updated_at: now,
   };
 }
@@ -148,11 +240,13 @@ export function toCampaignInsert(campaign: LeadCampaignInput, now = new Date().t
 export function toCampaignUpdate(campaign: LeadCampaignInput, now = new Date().toISOString()) {
   return {
     name: campaign.name,
-    stream: campaign.stream,
-    days_to_run: campaign.daysToRun,
-    daily_lead_target: campaign.dailyLeadTarget,
-    monthly_budget_usd: campaign.monthlyBudgetUsd,
     filters: campaign.filters,
+    days_to_run: campaign.daysToRun,
+    daily_target: campaign.dailyTarget,
+    monthly_budget_usd: campaign.monthlyBudgetUsd,
+    stream: campaign.stream,
+    owner_split: campaign.ownerSplit,
+    notes: campaign.notes,
     updated_at: now,
   };
 }

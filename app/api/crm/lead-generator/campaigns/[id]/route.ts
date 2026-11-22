@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { setLeadCampaignStatus, updateLeadCampaign } from "@/lib/lead-bank";
+import { setLeadCampaignActive, updateLeadCampaign } from "@/lib/lead-bank";
 import { fetchLeadCostEstimate } from "@/lib/lead-generator-upstream";
 import {
   leadGeneratorInvalid,
@@ -23,23 +23,16 @@ export async function PATCH(
     const body = await request.json().catch(() => ({}));
     const action = String(body?.action || "");
     if (action === "pause" || action === "resume") {
-      const campaign = await setLeadCampaignStatus(
-        params.id,
-        action === "pause" ? "paused" : "active"
-      );
+      const campaign = await setLeadCampaignActive(params.id, action === "resume");
       return NextResponse.json(
         { campaign, saved: true },
         { headers: leadGeneratorNoStore }
       );
     }
     if (action !== "save") throw leadGeneratorInvalid("Choose save, pause, or resume.");
-    const parsed = parseLeadCampaign(body);
+    const parsed = parseLeadCampaign(body, typeof body?.code === "string" ? body.code : undefined);
     if (!parsed.ok) throw leadGeneratorInvalid(parsed.message);
-    const estimate = await fetchLeadCostEstimate({
-      filters: parsed.campaign.filters,
-      daysToRun: parsed.campaign.daysToRun,
-      dailyLeadTarget: parsed.campaign.dailyLeadTarget,
-    });
+    const estimate = await fetchLeadCostEstimate();
     const campaign = await updateLeadCampaign(params.id, parsed.campaign);
     return NextResponse.json(
       { campaign, estimate, saved: true },

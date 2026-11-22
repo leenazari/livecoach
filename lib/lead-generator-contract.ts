@@ -1,19 +1,21 @@
-// Assumed outreachmailer contract. docs/lead-generator-contract.md was not on
-// branch cursor/adam-pipeline-37f0 when this was written. Change this file
-// when the real contract lands. LiveCoach never calls Apify.
+// Outreachmailer contract from docs/lead-generator-contract.md on
+// cursor/lead-bank-drain-aa5b, plus the cost-estimate handler
+// api/admin/lead-generator/cost-estimate.ts. LiveCoach never calls Apify.
 //
-// POST {origin}/api/admin/lead-generator/sample
-// GET  {origin}/api/admin/lead-generator/cost-estimate
+// POST /api/admin/lead-generator/sample
+//   body: filters object, or { campaign, filters }
+//   200: blocked, filters, not_applied, places_requested, apify_run_id,
+//        apify_cost_usd, cost_basis, leads[{company, website, domain, rating, reviews, city, phone}]
+//   A cap returns blocked true, empty leads, and a reason. Errors are { error } at 401, 503, or 500.
+// GET /api/admin/lead-generator/cost-estimate
+//   no query and no body. 200 shape is LeadCostEstimate below. Money is 4 decimal places.
+//   It prices saved campaigns only.
 // Authorization: Bearer LEADGEN_API_SECRET
 //
-// Sample body: sector, city, minRating, minReviews, maxReviews,
-// mustHaveWebsite, limit (always 10).
-// Sample JSON: leads[], sampleCostUsd.
-// Estimate query: the same filters plus daysToRun and dailyLeadTarget.
-// Estimate JSON: filterUsd, perLeadUsd, perDayUsd, perMonthUsd.
-//
-// Bank tables owned by outreachmailer (LiveCoach only reads and writes rows):
-// adam_lead_campaigns, adam_bank_decisions, adam_pipeline_leads.cleanse_*.
+// adam_lead_campaigns columns are CAMPAIGN_COLUMNS.
+// adam_bank_decisions columns are DECISION_COLUMNS. Join on campaign code.
+// Cleanse reads bank_status = qualified and cleanse_status = pending, and writes
+// only cleanse_status, cleanse_reason, and cleansed_at.
 
 export const LEAD_GENERATOR_PATHS = {
   sample: "/api/admin/lead-generator/sample",
@@ -28,27 +30,44 @@ export const LEAD_BANK_TABLES = {
 
 export const CAMPAIGN_COLUMNS = [
   "id",
+  "code",
   "name",
-  "status",
-  "stream",
-  "days_to_run",
-  "daily_lead_target",
-  "monthly_budget_usd",
+  "campaign",
   "filters",
+  "criteria_set_id",
+  "criteria_set_version",
+  "days_to_run",
+  "daily_target",
+  "monthly_budget_usd",
+  "active",
+  "stream",
+  "owner_split",
+  "notes",
   "created_at",
   "updated_at",
 ] as const;
 
 export const DECISION_COLUMNS = [
   "id",
-  "campaign_id",
+  "run_id",
+  "campaign",
+  "criteria_set",
   "step",
-  "outcome",
+  "count_before",
+  "count_after",
+  "apify_run_id",
+  "apify_cost_usd",
+  "model_cost_usd",
   "reason",
-  "spend_usd",
-  "counts",
   "created_at",
 ] as const;
+
+export const LEAD_CAMPAIGN_TAG = "C1";
+export const CRITERIA_SET_ID = "local-owners-no-chat";
+export const CRITERIA_SET_VERSION = "1";
+export const CLEANSE_CAMPAIGN = "cleanse";
+export const CLEANSE_CRITERIA_SET = "cleanse";
+export const LIST_PRICE_WEEKS_PER_MONTH = 4.33;
 
 export const LEAD_CLEANSE_COLUMNS = [
   "id",
@@ -69,41 +88,68 @@ export const LEAD_CLEANSE_COLUMNS = [
 ] as const;
 
 export const CLEANSE_STEP = "cleanse";
-export const SAMPLE_LIMIT = 10;
 
 export type LeadGeneratorFilters = {
+  search_term: string;
   sector: string;
   city: string;
-  minRating: number | null;
-  minReviews: number | null;
-  maxReviews: number | null;
-  mustHaveWebsite: boolean;
+  area: string;
+  min_rating: number | null;
+  min_reviews: number | null;
+  max_reviews: number | null;
+  must_have_website: boolean;
+  opening_hours: string | null;
+  category_tags: string[];
+  phone_present: boolean;
 };
 
 export type SampleLead = {
   company: string;
   website: string;
-  sector: string;
-  city: string;
-  area: string;
+  domain: string;
   rating: number | null;
   reviews: number | null;
+  city: string;
   phone: string;
-  email: string;
-  contactName: string;
 };
 
 export type SampleResult = {
+  blocked: boolean;
+  reason: string;
+  filters: LeadGeneratorFilters | null;
+  notApplied: string[];
+  placesRequested: number | null;
+  apifyRunId: string;
+  apifyCostUsd: number | null;
+  costBasis: string;
   leads: SampleLead[];
-  sampleCostUsd: number | null;
+};
+
+export type LeadCostCampaign = {
+  code: string;
+  name: string;
+  stream: string;
+  dailyTarget: number | null;
+  estimatedUsd: number | null;
+  placesPriced: number | null;
+  emailLookupsPriced: number | null;
 };
 
 export type LeadCostEstimate = {
-  filterUsd: number | null;
-  perLeadUsd: number | null;
-  perDayUsd: number | null;
-  perMonthUsd: number | null;
-  notes: string;
+  basis: "" | "list" | "actual";
+  daysOfData: number | null;
+  usdPerQualified: number | null;
+  listPrices: {
+    checked: string;
+    source: string;
+    mapsPlaceUsd: number | null;
+    mapsFilterUsd: number | null;
+    mapsFiltersApplied: number | null;
+    linkedinEmailUsd: number | null;
+    placeWithFiltersUsd: number | null;
+  };
+  sample10PlacesUsd: number | null;
+  campaigns: LeadCostCampaign[];
 };
 
 type BlockerOwner = "user" | "manager" | "owner" | "system";
@@ -151,111 +197,128 @@ const numberOrNull = (value: unknown): number | null => {
   return Math.round(amount * 10000) / 10000;
 };
 
-const firstNumber = (source: Record<string, unknown>, keys: string[]) => {
-  for (const key of keys) {
-    if (key in source) {
-      const amount = numberOrNull(source[key]);
-      if (amount != null) return amount;
-    }
-  }
-  const nested = source.cost;
-  if (nested && typeof nested === "object") {
-    return firstNumber(nested as Record<string, unknown>, keys);
-  }
-  return null;
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+
+const countOrNull = (value: unknown) => {
+  const amount = numberOrNull(value);
+  return amount == null ? null : Math.round(amount);
 };
 
-const firstText = (source: Record<string, unknown>, keys: string[], max: number) => {
-  for (const key of keys) {
-    const text = clip(source[key], max);
-    if (text) return text;
-  }
-  return "";
-};
-
-export function sampleRequestBody(filters: LeadGeneratorFilters) {
+export function normaliseFilters(raw: unknown): LeadGeneratorFilters {
+  const body = asRecord(raw);
+  const nested = asRecord(body?.filters);
+  const source = nested || body || {};
+  const tags = source.category_tags ?? source.categoryTags;
+  const opening = clip(source.opening_hours ?? source.openingHours, 160);
+  const website = source.must_have_website ?? source.mustHaveWebsite;
+  const phone = source.phone_present ?? source.phonePresent;
   return {
-    sector: filters.sector,
-    city: filters.city,
-    minRating: filters.minRating,
-    minReviews: filters.minReviews,
-    maxReviews: filters.maxReviews,
-    mustHaveWebsite: filters.mustHaveWebsite,
-    limit: SAMPLE_LIMIT,
+    search_term: clip(source.search_term ?? source.searchTerm, 160),
+    sector: clip(source.sector, 160),
+    city: clip(source.city, 160),
+    area: clip(source.area, 160),
+    min_rating: numberOrNull(source.min_rating ?? source.minRating),
+    min_reviews: countOrNull(source.min_reviews ?? source.minReviews),
+    max_reviews: countOrNull(source.max_reviews ?? source.maxReviews),
+    must_have_website: website === false || website === "false" ? false : true,
+    opening_hours: opening || null,
+    category_tags: Array.isArray(tags)
+      ? tags.map((tag) => clip(tag, 80)).filter(Boolean).slice(0, 20)
+      : [],
+    phone_present: phone === true || phone === "true",
   };
 }
 
-export function costEstimateQuery(input: {
-  filters: LeadGeneratorFilters;
-  daysToRun: number | null;
-  dailyLeadTarget: number | null;
-}) {
-  const query = new URLSearchParams();
-  const entries: Array<[string, string | number | boolean | null]> = [
-    ["sector", input.filters.sector],
-    ["city", input.filters.city],
-    ["minRating", input.filters.minRating],
-    ["minReviews", input.filters.minReviews],
-    ["maxReviews", input.filters.maxReviews],
-    ["mustHaveWebsite", input.filters.mustHaveWebsite],
-    ["daysToRun", input.daysToRun],
-    ["dailyLeadTarget", input.dailyLeadTarget],
-  ];
-  for (const [key, value] of entries) {
-    if (value == null || value === "") continue;
-    query.set(key, String(value));
-  }
-  return query;
+export function sampleRequestBody(filters: LeadGeneratorFilters, campaignCode?: string) {
+  return campaignCode ? { campaign: campaignCode, filters } : filters;
 }
 
-function leadRows(payload: Record<string, unknown>): Record<string, unknown>[] {
-  for (const key of ["leads", "sample", "rows", "results"]) {
-    if (Array.isArray(payload[key])) {
-      return payload[key].filter((row) => row && typeof row === "object") as Record<string, unknown>[];
-    }
+export function listPriceDailyUsd(
+  dailyTarget: number,
+  placeWithFiltersUsd: number,
+  linkedinEmailUsd: number
+) {
+  if (!Number.isFinite(dailyTarget) || dailyTarget < 0) return null;
+  if (!Number.isFinite(placeWithFiltersUsd) || !Number.isFinite(linkedinEmailUsd)) return null;
+  return Math.round((dailyTarget * 10 * placeWithFiltersUsd + dailyTarget * linkedinEmailUsd) * 10000) / 10000;
+}
+
+export function listPriceMonthlyUsd(perDayUsd: number, weekdaysPerWeek: number) {
+  if (!Number.isFinite(perDayUsd) || !Number.isInteger(weekdaysPerWeek) || weekdaysPerWeek < 0 || weekdaysPerWeek > 7) {
+    return null;
   }
-  return [];
+  return Math.round(perDayUsd * weekdaysPerWeek * LIST_PRICE_WEEKS_PER_MONTH * 10000) / 10000;
 }
 
 export function parseSampleResponse(payload: unknown): SampleResult {
-  const source = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
-  const leads = leadRows(source).slice(0, SAMPLE_LIMIT).map((row) => ({
-    company: firstText(row, ["company", "companyName", "name", "businessName"], 160),
-    website: firstText(row, ["website", "url", "site"], 300),
-    sector: firstText(row, ["sector", "category", "searchTerm"], 120),
-    city: firstText(row, ["city", "town"], 120),
-    area: firstText(row, ["area", "borough", "region"], 120),
-    rating: firstNumber(row, ["googleScore", "google_score", "rating", "stars"]),
-    reviews: (() => {
-      const count = firstNumber(row, ["reviews", "reviewCount", "review_count", "userRatingsTotal"]);
-      return count == null ? null : Math.round(count);
-    })(),
-    phone: firstText(row, ["phone", "phoneNumber"], 40),
-    email: firstText(row, ["email", "dmEmail", "dm_email"], 160),
-    contactName: firstText(row, ["contactName", "contact_full", "contactFull", "contact"], 120),
-  }));
+  const source = asRecord(payload) || {};
+  const leads = (Array.isArray(source.leads) ? source.leads : [])
+    .filter((row) => row && typeof row === "object")
+    .slice(0, 10)
+    .map((row) => {
+      const lead = row as Record<string, unknown>;
+      const reviews = numberOrNull(lead.reviews);
+      return {
+        company: clip(lead.company, 160),
+        website: clip(lead.website, 300),
+        domain: clip(lead.domain, 160),
+        rating: numberOrNull(lead.rating),
+        reviews: reviews == null ? null : Math.round(reviews),
+        city: clip(lead.city, 120),
+        phone: clip(lead.phone, 40),
+      };
+    });
+  const basis = clip(source.cost_basis, 20);
   return {
+    blocked: source.blocked === true,
+    reason: clip(source.reason, 280),
+    filters: source.filters ? normaliseFilters(source.filters) : null,
+    notApplied: Array.isArray(source.not_applied)
+      ? source.not_applied.map((item) => clip(item, 40)).filter(Boolean)
+      : [],
+    placesRequested: countOrNull(source.places_requested),
+    apifyRunId: clip(source.apify_run_id, 80),
+    apifyCostUsd: numberOrNull(source.apify_cost_usd),
+    costBasis: basis === "actual" || basis === "list" ? basis : "",
     leads,
-    sampleCostUsd: firstNumber(source, [
-      "sampleCostUsd",
-      "sample_cost_usd",
-      "costUsd",
-      "cost_usd",
-      "actualCostUsd",
-      "usd",
-    ]),
   };
 }
 
 export function parseCostEstimate(payload: unknown): LeadCostEstimate {
-  const source = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
-  const notes = firstText(source, ["notes", "note", "detail"], 280);
+  const source = asRecord(payload) || {};
+  const prices = asRecord(source.list_prices) || {};
+  const basis = clip(source.basis, 20);
+  const campaigns = (Array.isArray(source.campaigns) ? source.campaigns : [])
+    .filter((row) => row && typeof row === "object")
+    .slice(0, 50)
+    .map((row) => {
+      const campaign = row as Record<string, unknown>;
+      return {
+        code: clip(campaign.code, 80),
+        name: clip(campaign.name, 80),
+        stream: clip(campaign.stream, 40),
+        dailyTarget: countOrNull(campaign.daily_target),
+        estimatedUsd: numberOrNull(campaign.estimated_usd),
+        placesPriced: countOrNull(campaign.places_priced),
+        emailLookupsPriced: countOrNull(campaign.email_lookups_priced),
+      };
+    });
   return {
-    filterUsd: firstNumber(source, ["filterUsd", "filter_usd", "sampleUsd", "sample_usd", "searchUsd"]),
-    perLeadUsd: firstNumber(source, ["perLeadUsd", "per_lead_usd", "leadUsd", "unitUsd"]),
-    perDayUsd: firstNumber(source, ["perDayUsd", "per_day_usd", "dailyUsd", "dayUsd"]),
-    perMonthUsd: firstNumber(source, ["perMonthUsd", "per_month_usd", "monthlyUsd", "monthUsd"]),
-    notes: /bearer|api[_-]?key|secret|token/i.test(notes) ? "" : notes,
+    basis: basis === "list" || basis === "actual" ? basis : "",
+    daysOfData: countOrNull(source.days_of_data),
+    usdPerQualified: numberOrNull(source.usd_per_qualified),
+    listPrices: {
+      checked: clip(prices.checked, 20),
+      source: /^https:\/\//.test(clip(prices.source, 200)) ? clip(prices.source, 200) : "",
+      mapsPlaceUsd: numberOrNull(prices.maps_place_usd),
+      mapsFilterUsd: numberOrNull(prices.maps_filter_usd),
+      mapsFiltersApplied: countOrNull(prices.maps_filters_applied),
+      linkedinEmailUsd: numberOrNull(prices.linkedin_email_usd),
+      placeWithFiltersUsd: numberOrNull(prices.place_with_filters_usd),
+    },
+    sample10PlacesUsd: numberOrNull(source.sample_10_places_usd),
+    campaigns,
   };
 }
 

@@ -1,5 +1,7 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
 import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { usageCostUSD } from "@/lib/costs";
 import { LeadGeneratorError } from "@/lib/lead-generator-contract";
@@ -60,6 +62,7 @@ export async function runNightlyLeadCleanse(now = new Date(), env = process.env)
       existingDomainHits: (domains) => existingCleanseDomains(domains, loadedIds),
       saveVerdict: saveCleanseVerdict,
       askModel: askCleanseModel,
+      runId: randomUUID(),
       logDecision: logCleanseDecision,
     });
   } catch (error) {

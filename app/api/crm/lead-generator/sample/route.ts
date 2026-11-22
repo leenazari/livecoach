@@ -19,7 +19,10 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => null);
     const parsed = parseLeadFilters(body);
     if (!parsed.ok) throw leadGeneratorInvalid(parsed.message);
-    const sample = await fetchLeadSample(parsed.filters);
+    const campaignCode = body && typeof body === "object" && typeof (body as { campaign?: unknown }).campaign === "string"
+      ? String((body as { campaign?: unknown }).campaign).trim()
+      : "";
+    const sample = await fetchLeadSample(parsed.filters, {}, campaignCode || undefined);
     return NextResponse.json(sample, { headers: leadGeneratorNoStore });
   } catch (error) {
     return leadGeneratorJson(error);

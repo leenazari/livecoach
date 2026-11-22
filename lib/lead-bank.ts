@@ -12,7 +12,7 @@ import {
   toCampaignUpdate,
   type LeadCampaignInput,
 } from "@/lib/lead-generator-rules";
-import { isMissingLeadBankError, presentCampaigns, toPublicCampaign } from "@/lib/lead-bank-shape";
+import { isDuplicateCampaignCode, isMissingLeadBankError, presentCampaigns, toPublicCampaign } from "@/lib/lead-bank-shape";
 import {
   domainKey,
   toCleanseDecisionRow,
@@ -30,6 +30,17 @@ const safeCode = (error: unknown) => {
 
 function bankError(action: string, error: unknown, outcome: string) {
   console.error("lead_bank_failed", { action, code: safeCode(error) });
+  if (isDuplicateCampaignCode(error)) {
+    return new LeadGeneratorError({
+      status: 409,
+      code: "lead_campaign_code_taken",
+      title: "That campaign code is already used",
+      reason: "Another campaign already uses this code.",
+      nextAction: "Change the name so the code is different, then save again.",
+      outcome: "Nothing was saved.",
+      responsible: "user",
+    });
+  }
   if (isMissingLeadBankError(error)) {
     return new LeadGeneratorError({
       status: 503,
@@ -144,12 +155,12 @@ export async function updateLeadCampaign(id: string, campaign: LeadCampaignInput
   return publicRow;
 }
 
-export async function setLeadCampaignStatus(id: string, status: "active" | "paused") {
+export async function setLeadCampaignActive(id: string, active: boolean) {
   requireId(id);
-  const row = await query(status === "paused" ? "Campaign pause" : "Campaign resume", "The previous status still applies if this failed.", () =>
+  const row = await query(active ? "Campaign resume" : "Campaign pause", "The previous active flag still applies if this failed.", () =>
     supabaseService
       .from(LEAD_BANK_TABLES.campaigns)
-      .update({ status, updated_at: new Date().toISOString() })
+      .update({ active, updated_at: new Date().toISOString() })
       .eq("id", id)
       .select(CAMPAIGN_COLUMNS.join(","))
       .maybeSingle()
@@ -175,11 +186,13 @@ export async function loadPendingCleanseLeads(limit: number) {
   const countResult = await supabaseService
     .from(LEAD_BANK_TABLES.leads)
     .select("id", { count: "exact", head: true })
+    .eq("bank_status", "qualified")
     .eq("cleanse_status", "pending");
   if (countResult.error) throw countResult.error;
   const rows = await supabaseService
     .from(LEAD_BANK_TABLES.leads)
     .select(leadSelect)
+    .eq("bank_status", "qualified")
     .eq("cleanse_status", "pending")
     .order("created_at", { ascending: true })
     .limit(limit);

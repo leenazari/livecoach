@@ -8,9 +8,9 @@ import {
   DECISION_COLUMNS,
   LEAD_BANK_TABLES,
   LEAD_GENERATOR_PATHS,
-  SAMPLE_LIMIT,
   assertLeadGeneratorOrigin,
-  costEstimateQuery,
+  listPriceDailyUsd,
+  listPriceMonthlyUsd,
   parseCostEstimate,
   parseSampleResponse,
   performLeadGeneratorRequest,
@@ -37,6 +37,7 @@ import {
   parseLeadFilters,
   safePublicUrl,
   toCampaignInsert,
+  toCampaignUpdate,
 } from "../lib/lead-generator-rules.ts";
 
 const read = (file) => readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
@@ -57,48 +58,69 @@ assert.equal(canManageLeadGenerator("owner", "suspended"), false);
 assert.equal(canManageLeadGenerator("manager", "onboarding"), false);
 
 const filters = parseLeadFilters({
+  search_term: "solicitors",
   sector: "solicitors",
   city: "Manchester",
-  minRating: "4.5",
-  minReviews: "10",
-  maxReviews: "80",
-  mustHaveWebsite: false,
-  openingHours: true,
-  categoryTags: true,
-  phonePresent: true,
+  area: "Manchester",
+  min_rating: "4.5",
+  min_reviews: "10",
+  max_reviews: "80",
+  must_have_website: false,
+  phone_present: true,
+  opening_hours: "9 to 5",
+  category_tags: ["law"],
 });
 assert.equal(filters.ok, true);
-assert.equal(filters.filters.mustHaveWebsite, false);
-assert.deepEqual(Object.keys(filters.filters).sort(), ["city", "maxReviews", "minRating", "minReviews", "mustHaveWebsite", "sector"]);
-assert.equal(parseLeadFilters({ sector: "a", city: "" }).ok, false);
-assert.equal(parseLeadFilters({ minRating: 6, sector: "law" }).ok, false);
-assert.equal(parseLeadFilters({ sector: "law", minReviews: 1.5 }).ok, false);
-assert.equal(parseLeadFilters({ sector: "law", minReviews: 20, maxReviews: 5 }).ok, false);
+assert.equal(filters.filters.must_have_website, false);
+assert.equal(filters.filters.phone_present, true);
+assert.equal(filters.filters.opening_hours, null);
+assert.deepEqual(filters.filters.category_tags, []);
+assert.equal(parseLeadFilters({ min_rating: 6, sector: "law" }).ok, false);
+assert.equal(parseLeadFilters({ sector: "law", min_reviews: 1.5 }).ok, false);
+assert.equal(parseLeadFilters({ sector: "law", min_reviews: 20, max_reviews: 5 }).ok, false);
 
 const campaign = parseLeadCampaign({
   name: "Manchester law",
-  daysToRun: 14,
-  dailyLeadTarget: 15,
-  monthlyBudgetUsd: "",
-  stream: "sarah_mailer",
+  daysToRun: [1, 2, 3, 4, 5],
+  dailyTarget: 15,
+  monthlyBudgetUsd: 0,
+  stream: "reps",
+  ownerSplit: [{ owner: "Lee", daily: 15 }, { owner: "Nikhara", daily: 5 }],
   filters: filters.filters,
 });
-assert.equal(campaign.ok, true);
-assert.equal(campaign.campaign.monthlyBudgetUsd, null);
-assert.equal(parseLeadCampaign({ ...campaign.campaign, daysToRun: 91 }).ok, false);
-assert.equal(parseLeadCampaign({ ...campaign.campaign, dailyLeadTarget: 0 }).ok, false);
-assert.equal(parseLeadCampaign({ ...campaign.campaign, stream: "other" }).ok, false);
-assert.equal(parseLeadCampaign({ ...campaign.campaign, monthlyBudgetUsd: 0 }).ok, false);
-assert.deepEqual(Object.keys(toCampaignInsert(campaign.campaign, "2026-11-22T00:00:00.000Z")).sort(), [...CAMPAIGN_INSERT_KEYS].sort());
+assert.equal(campaign.ok, false);
+const saved = parseLeadCampaign({
+  name: "Manchester law",
+  daysToRun: [1, 2, 3, 4, 5],
+  dailyTarget: 15,
+  monthlyBudgetUsd: 0,
+  stream: "reps",
+  ownerSplit: [{ owner: "Lee", daily: 5 }, { owner: "Kamm", daily: 5 }, { owner: "Sharon", daily: 5 }],
+  filters: filters.filters,
+});
+assert.equal(saved.ok, true);
+assert.equal(saved.campaign.code, "manchester-law");
+assert.equal(saved.campaign.campaign, "C1");
+assert.equal(saved.campaign.criteriaSetId, "local-owners-no-chat");
+assert.equal(saved.campaign.criteriaSetVersion, "1");
+assert.equal(saved.campaign.monthlyBudgetUsd, 0);
+assert.deepEqual(saved.campaign.daysToRun, [1, 2, 3, 4, 5]);
+assert.equal(parseLeadCampaign({ ...saved.campaign, daysToRun: [8] }).ok, false);
+assert.equal(parseLeadCampaign({ ...saved.campaign, daysToRun: [] }).ok, false);
+assert.equal(parseLeadCampaign({ ...saved.campaign, stream: "other" }).ok, false);
+assert.equal(parseLeadCampaign({ ...saved.campaign, code: "C1-sarah" }, "C1-sarah").campaign.code, "C1-sarah");
+assert.deepEqual(Object.keys(toCampaignInsert(saved.campaign, "2026-11-22T00:00:00.000Z")).sort(), [...CAMPAIGN_INSERT_KEYS].sort());
+assert.equal("code" in toCampaignUpdate(saved.campaign, "2026-11-22T00:00:00.000Z"), false);
+assert.equal(toCampaignUpdate(saved.campaign).daily_target, 15);
 
-const body = sampleRequestBody(filters.filters);
-assert.equal(body.limit, SAMPLE_LIMIT);
-assert.equal("openingHours" in body, false);
+const body = sampleRequestBody(filters.filters, "C1-sarah");
+assert.equal(body.campaign, "C1-sarah");
+assert.equal(body.filters.search_term, "solicitors");
+assert.equal("limit" in body, false);
 assert.equal(LEAD_GENERATOR_PATHS.sample, "/api/admin/lead-generator/sample");
 assert.equal(LEAD_GENERATOR_PATHS.costEstimate, "/api/admin/lead-generator/cost-estimate");
-const query = costEstimateQuery({ filters: filters.filters, daysToRun: 14, dailyLeadTarget: 15 });
-assert.equal(query.get("daysToRun"), "14");
-assert.equal(query.get("mustHaveWebsite"), "false");
+assert.equal(listPriceDailyUsd(45, 0.006, 0.01), 3.15);
+assert.equal(listPriceMonthlyUsd(3.15, 7), 95.4765);
 
 const secret = "test-secret-value";
 let seen = null;
@@ -112,8 +134,11 @@ const performed = await performLeadGeneratorRequest({
   fetchImpl: async (url, init) => {
     seen = { url: String(url), init };
     return new Response(JSON.stringify({
-      leads: [{ company: `Acme ${secret}`, website: "https://acme.test", google_score: 4.6, review_count: 12 }],
-      sample_cost_usd: 0.042,
+      blocked: false,
+      not_applied: ["opening_hours"],
+      apify_cost_usd: 0.042,
+      cost_basis: "list",
+      leads: [{ company: `Acme ${secret}`, website: "https://acme.test", domain: "acme.test", rating: 4.6, reviews: 12, city: "Manchester", phone: "0121" }],
     }), { status: 200 });
   },
 });
@@ -122,21 +147,31 @@ assert.equal(seen.init.redirect, "error");
 assert.equal(seen.init.method, "POST");
 assert.doesNotMatch(seen.url, /test-secret-value/);
 assert.doesNotMatch(seen.init.body, /test-secret-value/);
-assert.equal(JSON.parse(seen.init.body).limit, 10);
+assert.equal(JSON.parse(seen.init.body).filters.must_have_website, false);
+assert.equal(seen.init.method, "POST");
+assert.equal(new URL(seen.url).search, "");
 const sample = parseSampleResponse(performed.payload);
+assert.equal(sample.blocked, false);
+assert.deepEqual(sample.notApplied, ["opening_hours"]);
 assert.equal(sample.leads[0].company, "Acme");
 assert.doesNotMatch(JSON.stringify(performed.payload), /test-secret-value/);
 assert.equal(sample.leads[0].rating, 4.6);
 assert.equal(sample.leads[0].reviews, 12);
-assert.equal(sample.sampleCostUsd, 0.042);
-assert.equal(parseCostEstimate({
-  filter_usd: 0.4,
-  per_lead_usd: 0.04,
-  per_day_usd: 1.25,
-  per_month_usd: 30,
-  notes: "Bearer hidden secret",
-}).notes, "");
-assert.equal(parseCostEstimate({ perDayUsd: 2, perMonthUsd: 40 }).perMonthUsd, 40);
+assert.equal(sample.apifyCostUsd, 0.042);
+assert.equal(parseSampleResponse({ blocked: true, reason: "campaign budget reached", leads: [] }).blocked, true);
+const estimate = parseCostEstimate({
+  basis: "list",
+  days_of_data: 2,
+  usd_per_qualified: null,
+  list_prices: { checked: "2026-11-22", source: "https://apify.com/example", maps_place_usd: 0.004, maps_filter_usd: 0.001, maps_filters_applied: 2, linkedin_email_usd: 0.01, place_with_filters_usd: 0.006 },
+  sample_10_places_usd: 0.06,
+  campaigns: [{ code: "C1-sarah", name: "Sarah", stream: "sarah_mailer", daily_target: 45, estimated_usd: 3.15, places_priced: 450, email_lookups_priced: 45 }],
+});
+assert.equal(estimate.basis, "list");
+assert.equal(estimate.usdPerQualified, null);
+assert.equal(estimate.sample10PlacesUsd, 0.06);
+assert.equal(estimate.campaigns[0].estimatedUsd, 3.15);
+assert.equal(estimate.listPrices.placeWithFiltersUsd, 0.006);
 
 assert.throws(() => assertLeadGeneratorOrigin("http://example.com", secret), /origin/);
 assert.throws(() => assertLeadGeneratorOrigin("https://example.com/api", secret), /origin/);
@@ -180,6 +215,7 @@ const baseDeps = (overrides) => ({
   existingDomainHits: async () => new Set(),
   saveVerdict: async () => { throw new Error("should not save"); },
   askModel: async () => { throw new Error("should not ask"); },
+  runId: "11111111-1111-4111-8111-111111111111",
   logDecision: async () => { throw new Error("should not log"); },
   ...overrides,
 });
@@ -189,14 +225,14 @@ assert.equal(off.decisionLogged, false);
 const early = await executeLeadCleanse(baseDeps({ now: new Date("2026-01-15T01:00:00Z") }));
 assert.equal(early.skipped, "outside_london_window");
 
-const saved = [];
+const savedVerdicts = [];
 let logged = null;
 const ran = await executeLeadCleanse(baseDeps({
   loadPending: async () => ({
     pendingCount: 3,
     leads: [lead("a", "2026-01-01T00:00:00Z"), lead("b", "2026-01-02T00:00:00Z", { domain: "same.test" }), lead("c", "2026-01-03T00:00:00Z", { domain: "same.test" })],
   }),
-  saveVerdict: async (verdict) => { saved.push(verdict); return "saved"; },
+  saveVerdict: async (verdict) => { savedVerdicts.push(verdict); return "saved"; },
   askModel: async (leads) => ({
     text: JSON.stringify({ results: [{ id: leads[0].id, status: "passed", reason: "Real firm." }, { id: "secret-row", status: "failed", reason: "ignore" }] }),
     inputTokens: 120, outputTokens: 30, costUsd: 0.001,
@@ -208,9 +244,14 @@ assert.equal(ran.failed, 1);
 assert.equal(ran.leftPending, 1);
 assert.equal(ran.decisionLogged, true);
 assert.equal(logged.step, CLEANSE_STEP);
-assert.equal(logged.campaign_id, null);
-assert.equal(logged.spend_usd, 0.001);
-assert.equal(saved.some((row) => row.id === "secret-row"), false);
+assert.equal(logged.campaign, "cleanse");
+assert.equal(logged.criteria_set, "cleanse");
+assert.equal(logged.apify_cost_usd, 0);
+assert.equal(logged.model_cost_usd, 0.001);
+assert.equal(logged.count_before, 3);
+assert.equal(logged.count_after, 1);
+assert.equal(logged.run_id, "11111111-1111-4111-8111-111111111111");
+assert.equal(savedVerdicts.some((row) => row.id === "secret-row"), false);
 assert.match(ran.note, /decision log was written/i);
 
 const partial = await executeLeadCleanse(baseDeps({
@@ -235,19 +276,22 @@ assert.equal(stopped.updatesSaved, 0);
 assert.match(stopped.note, /later update did not finish/i);
 
 const presented = presentCampaigns(
-  [{ id: "camp", name: "Manchester law", status: "active", stream: "reps", days_to_run: 14, daily_lead_target: 15, monthly_budget_usd: "25.5", filters: filters.filters, created_at: "2026-11-22T00:00:00Z", updated_at: "2026-11-22T00:00:00Z" }],
+  [{ id: "camp", code: "C1-reps", name: "Manchester law", campaign: "C1", active: true, stream: "reps", days_to_run: [1, 2, 3, 4, 5], daily_target: 15, monthly_budget_usd: "25.5", filters: filters.filters, owner_split: [{ owner: "Lee", daily: 15 }], criteria_set_id: "local-owners-no-chat", criteria_set_version: "1", notes: "", created_at: "2026-11-22T00:00:00Z", updated_at: "2026-11-22T00:00:00Z" }],
   [
-    { id: "d1", campaign_id: "camp", step: "sample", outcome: "kept", reason: "Sample kept.", spend_usd: 0.2, counts: { leads: 10 }, created_at: "2026-11-22T01:00:00Z" },
-    { id: "d2", campaign_id: null, step: "cleanse", outcome: "completed", reason: "Passed 1. Failed 0. Left pending 0.", spend_usd: 0.001, counts: { passed: 1 }, created_at: "2026-11-22T02:00:00Z" },
+    { id: "d1", run_id: "run", campaign: "C1-reps", criteria_set: "local-owners-no-chat@1", step: "sample", count_before: 0, count_after: 10, apify_run_id: "", apify_cost_usd: 0.2, model_cost_usd: 0, reason: "Sample kept.", created_at: "2026-11-22T01:00:00Z" },
+    { id: "d2", run_id: "run-2", campaign: "cleanse", criteria_set: "cleanse", step: "cleanse", count_before: 4, count_after: 1, apify_run_id: "", apify_cost_usd: 0, model_cost_usd: 0.001, reason: "Passed 1. Failed 0. Left pending 1.", created_at: "2026-11-22T02:00:00Z" },
   ]
 );
 assert.equal(presented.campaigns[0].recentSpendUsd, 0.2);
 assert.equal(presented.campaigns[0].recentDecisions.length, 1);
 assert.equal(presented.cleanseRuns[0].id, "d2");
 assert.equal(presented.campaigns[0].monthlyBudgetUsd, 25.5);
-assert.deepEqual(Object.keys(toCleanseDecisionRow({ outcome: "completed", reason: "Passed 0. Failed 0. Left pending 0.", spendUsd: 0, counts: { passed: 0 } })).sort(), ["campaign_id", "counts", "outcome", "reason", "spend_usd", "step"]);
-assert.deepEqual(CAMPAIGN_COLUMNS.includes("filters"), true);
-assert.equal(DECISION_COLUMNS.includes("spend_usd"), true);
+assert.equal(presented.campaigns[0].active, true);
+assert.deepEqual(Object.keys(toCleanseDecisionRow({ reason: "Passed 0. Failed 0. Left pending 0.", countBefore: 4, countAfter: 4, modelCostUsd: 0 }, "run")).sort(), ["apify_cost_usd", "apify_run_id", "campaign", "count_after", "count_before", "criteria_set", "model_cost_usd", "reason", "run_id", "step"]);
+assert.equal(CAMPAIGN_COLUMNS.includes("daily_target"), true);
+assert.equal(CAMPAIGN_COLUMNS.includes("active"), true);
+assert.equal(DECISION_COLUMNS.includes("model_cost_usd"), true);
+assert.equal(DECISION_COLUMNS.includes("campaign_id"), false);
 assert.equal(LEAD_BANK_TABLES.leads, "adam_pipeline_leads");
 
 const sampleBlock = crmFallbackBlockerPayload({ status: 0, method: "POST", url: "/api/crm/lead-generator/sample" });
@@ -264,6 +308,14 @@ for (const text of [sampleBlock.error, saveBlock.error, readBlock.error, page, n
 assert.match(nav, /viewerRole === "owner" \|\| viewerRole === "manager"/);
 assert.match(nav, /\/crm\/lead-generator/);
 assert.match(page, /Coming soon/);
+assert.match(page, /estimate at list prices/);
+assert.match(page, /WEEKDAYS/);
+assert.match(read("lib/lead-generator-rules.ts"), /Monday/);
+assert.match(read("app/api/crm/lead-generator/cost-estimate/route.ts"), /fetchLeadCostEstimate\(\)/);
+assert.doesNotMatch(read("app/api/crm/lead-generator/cost-estimate/route.ts"), /searchParams/);
+assert.match(bank, /bank_status", "qualified"/);
+assert.match(bank, /active, updated_at/);
+assert.doesNotMatch(bank, /daily_lead_target|campaign_id|spend_usd/);
 assert.match(page, /disabled/);
 assert.match(page, /Run sample/);
 assert.match(page, /Save as campaign/);

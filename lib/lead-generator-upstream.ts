@@ -4,7 +4,6 @@ import {
   LEAD_GENERATOR_PATHS,
   LeadGeneratorError,
   assertLeadGeneratorOrigin,
-  costEstimateQuery,
   parseCostEstimate,
   parseSampleResponse,
   performLeadGeneratorRequest,
@@ -104,7 +103,8 @@ async function callUpstream(
 
 export async function fetchLeadSample(
   filters: LeadGeneratorFilters,
-  deps: UpstreamDeps = {}
+  deps: UpstreamDeps = {},
+  campaignCode?: string
 ): Promise<SampleResult> {
   const payload = await callUpstream(
     "sample",
@@ -112,25 +112,17 @@ export async function fetchLeadSample(
     LEAD_GENERATOR_PATHS.sample,
     deps,
     undefined,
-    sampleRequestBody(filters)
+    sampleRequestBody(filters, campaignCode)
   );
   return parseSampleResponse(payload);
 }
 
-export async function fetchLeadCostEstimate(
-  input: {
-    filters: LeadGeneratorFilters;
-    daysToRun: number | null;
-    dailyLeadTarget: number | null;
-  },
-  deps: UpstreamDeps = {}
-): Promise<LeadCostEstimate> {
+export async function fetchLeadCostEstimate(deps: UpstreamDeps = {}): Promise<LeadCostEstimate> {
   const payload = await callUpstream(
     "estimate",
     "GET",
     LEAD_GENERATOR_PATHS.costEstimate,
-    deps,
-    costEstimateQuery(input)
+    deps
   );
   return parseCostEstimate(payload);
 }

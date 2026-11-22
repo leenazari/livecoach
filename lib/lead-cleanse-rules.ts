@@ -57,10 +57,10 @@ export type CleanseVerdict = {
 };
 
 export type CleanseDecisionDraft = {
-  outcome: "completed" | "partial";
   reason: string;
-  spendUsd: number;
-  counts: Record<string, number>;
+  countBefore: number;
+  countAfter: number;
+  modelCostUsd: number;
 };
 
 export type CleansePublicResult = {
@@ -194,14 +194,20 @@ export function parseCleanseVerdicts(text: string, allowedIds: Set<string>): Cle
   return verdicts;
 }
 
-export function toCleanseDecisionRow(draft: CleanseDecisionDraft) {
+export function toCleanseDecisionRow(draft: CleanseDecisionDraft, runId: string) {
+  // step 'cleanse' is allowed on adam_bank_decisions. campaign and criteria_set
+  // are the literal 'cleanse', not a lead campaign code.
   return {
-    campaign_id: null,
+    run_id: runId,
+    campaign: "cleanse",
+    criteria_set: "cleanse",
     step: "cleanse",
-    outcome: draft.outcome,
+    count_before: draft.countBefore,
+    count_after: draft.countAfter,
+    apify_run_id: "",
+    apify_cost_usd: 0,
+    model_cost_usd: draft.modelCostUsd,
     reason: draft.reason,
-    spend_usd: draft.spendUsd,
-    counts: draft.counts,
   };
 }
 
@@ -232,6 +238,7 @@ export async function executeLeadCleanse(deps: {
     outputTokens: number;
     costUsd: number;
   }>;
+  runId: string;
   logDecision: (row: ReturnType<typeof toCleanseDecisionRow>) => Promise<boolean>;
 }): Promise<CleansePublicResult> {
   if (!leadCleanseEnabled(deps.env)) {
@@ -282,8 +289,6 @@ export async function executeLeadCleanse(deps: {
   for (const verdict of localFails) await apply(verdict);
 
   let modelCostUsd = 0;
-  let inputTokens = 0;
-  let outputTokens = 0;
   let batches = 0;
   let modelFailed = false;
   let queue = split.unique;
@@ -295,8 +300,6 @@ export async function executeLeadCleanse(deps: {
     try {
       const answer = await deps.askModel(fitted);
       modelCostUsd += Number(answer.costUsd) || 0;
-      inputTokens += Number(answer.inputTokens) || 0;
-      outputTokens += Number(answer.outputTokens) || 0;
       for (const verdict of parseCleanseVerdicts(answer.text, ids)) await apply(verdict);
     } catch {
       modelFailed = true;
@@ -304,25 +307,15 @@ export async function executeLeadCleanse(deps: {
   }
 
   const leftPending = Math.max(0, loaded.pendingCount - passed - failed);
-  const incomplete = stopped || modelFailed || updatesSaved !== updatesAttempted;
   const draft: CleanseDecisionDraft = {
-    outcome: incomplete ? "partial" : "completed",
     reason: `Passed ${passed}. Failed ${failed}. Left pending ${leftPending}.`,
-    spendUsd: Math.round(modelCostUsd * 1_000_000) / 1_000_000,
-    counts: {
-      read: leads.length,
-      pendingCount: loaded.pendingCount,
-      passed,
-      failed,
-      leftPending,
-      batches,
-      inputTokens,
-      outputTokens,
-    },
+    countBefore: loaded.pendingCount,
+    countAfter: leftPending,
+    modelCostUsd: Math.round(modelCostUsd * 10000) / 10000,
   };
   let decisionLogged = false;
   try {
-    decisionLogged = await deps.logDecision(toCleanseDecisionRow(draft));
+    decisionLogged = await deps.logDecision(toCleanseDecisionRow(draft, deps.runId));
   } catch {
     decisionLogged = false;
   }
@@ -350,7 +343,7 @@ export async function executeLeadCleanse(deps: {
     updatesSaved,
     updatesAttempted,
     decisionLogged,
-    modelCostUsd: draft.spendUsd,
+    modelCostUsd: draft.modelCostUsd,
     note: parts.join(" "),
   };
 }
