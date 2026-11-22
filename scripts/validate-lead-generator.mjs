@@ -9,6 +9,7 @@ import {
   LEAD_BANK_TABLES,
   LEAD_GENERATOR_PATHS,
   assertLeadGeneratorOrigin,
+  gbpToUsd,
   leadsAtListPrice,
   listPriceDailyUsd,
   listPriceMonthlyUsd,
@@ -33,7 +34,7 @@ import {
 } from "../lib/lead-cleanse-rules.ts";
 import {
   canManageLeadGenerator,
-  formatUsd,
+  formatGbp,
   parseLeadCampaign,
   parseLeadFilters,
   safePublicUrl,
@@ -123,6 +124,8 @@ assert.equal(LEAD_GENERATOR_PATHS.costEstimate, "/api/admin/lead-generator/cost-
 assert.equal(listPriceDailyUsd(45, 0.006, 0.01), 3.15);
 assert.equal(listPriceMonthlyUsd(3.15, 7), 95.4765);
 assert.equal(leadsAtListPrice(7, 0.006, 0.01), 100);
+assert.equal(gbpToUsd(197.5, 0.79), 250);
+assert.equal(parseLeadCampaign({ ...saved.campaign, monthlyBudgetGbp: 79 }).campaign.monthlyBudgetUsd, 100);
 assert.equal(parseLeadCampaign({ ...saved.campaign, maxSpendUsd: -1 }).ok, false);
 assert.equal(parseLeadCampaign({ ...saved.campaign, endDate: "2026-13-40" }).ok, false);
 
@@ -169,7 +172,7 @@ const estimate = parseCostEstimate({
   usd_per_qualified: null,
   list_prices: { checked: "2026-11-22", source: "https://apify.com/example", maps_place_usd: 0.004, maps_filter_usd: 0.001, maps_filters_applied: 2, linkedin_email_usd: 0.01, place_with_filters_usd: 0.006 },
   sample_20_places_usd: 0.12,
-  campaigns: [{ code: "C1-sarah", name: "Sarah", stream: "sarah_mailer", daily_target: 45, estimated_usd: 3.15, places_priced: 450, email_lookups_priced: 45, leads_produced: 4, spend_to_date_usd: 1.2, remaining_spend_usd: null }],
+  campaigns: [{ code: "C1-sarah", name: "Sarah", stream: "sarah_mailer", daily_target: 45, estimated_usd: 3.15, places_priced: 450, email_lookups_priced: 45, leads_produced: 4, spend_to_date_usd: 1.2, remaining_spend_usd: null, bank: 12, partials_to_process: 3 }],
 });
 assert.equal(estimate.basis, "list");
 assert.equal(estimate.usdPerQualified, null);
@@ -177,6 +180,8 @@ assert.equal(estimate.sample20PlacesUsd, 0.12);
 assert.equal(estimate.campaigns[0].estimatedUsd, 3.15);
 assert.equal(estimate.campaigns[0].leadsProduced, 4);
 assert.equal(estimate.campaigns[0].remainingSpendUsd, null);
+assert.equal(estimate.campaigns[0].bank, 12);
+assert.equal(estimate.campaigns[0].partialsToProcess, 3);
 assert.equal(estimate.listPrices.placeWithFiltersUsd, 0.006);
 
 assert.throws(() => assertLeadGeneratorOrigin("http://example.com", secret), /origin/);
@@ -186,8 +191,11 @@ assert.throws(() => assertLeadGeneratorOrigin(`https://example.com/?${secret}`, 
 assert.equal(assertLeadGeneratorOrigin("https://mailer.test", secret), "https://mailer.test");
 assert.equal(assertLeadGeneratorOrigin("http://127.0.0.1:3000", secret), "http://127.0.0.1:3000");
 assert.equal(safePublicUrl("javascript:alert(1)"), "");
-assert.equal(formatUsd(0.042), "US$0.0420");
-assert.equal(formatUsd(null), "Not returned");
+assert.equal(formatGbp(0.12), "£0.12");
+assert.equal(formatGbp(9.5), "£9.50");
+assert.equal(formatGbp(250), "£250");
+assert.equal(formatGbp(0), "£0");
+assert.equal(formatGbp(null), "Not returned");
 
 assert.equal(leadCleanseEnabled({}), false);
 assert.equal(leadCleanseEnabled({ LEAD_CLEANSE_ENABLED: "TRUE" }), false);
@@ -315,7 +323,12 @@ assert.match(nav, /viewerRole === "owner" \|\| viewerRole === "manager"/);
 assert.match(nav, /\/crm\/lead-generator/);
 assert.match(page, /Coming soon/);
 assert.match(page, /estimate at list prices/);
-assert.match(page, /Maximum spend \(USD\), recommended/);
+assert.match(page, /Maximum spend \(£\), recommended/);
+assert.match(page, /Bank \(qualified\)/);
+assert.match(page, /Partials to process/);
+assert.match(page, /Approx, converted from US\$/);
+assert.doesNotMatch(page, /US\$\d/);
+assert.match(read(".env.example"), /LEADGEN_USD_TO_GBP=0.79/);
 assert.match(page, /whichever comes first/);
 assert.match(page, /up to 20 places/);
 assert.match(page, /Completed/);

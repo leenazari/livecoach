@@ -5,16 +5,18 @@ import { useEffect, useState } from "react";
 import NavMenu from "@/components/crm/NavMenu";
 import { crmFetch } from "@/lib/crm";
 import {
+  gbpToUsd,
   leadsAtListPrice,
   listPriceDailyUsd,
   listPriceMonthlyUsd,
+  usdToGbp,
   type LeadCostEstimate,
   type SampleResult,
 } from "@/lib/lead-generator-contract";
 import {
   WEEKDAYS,
   campaignCodeFromName,
-  formatUsd,
+  formatGbp,
   notAppliedLabel,
   parseLeadCampaign,
   parseLeadFilters,
@@ -86,19 +88,33 @@ const when = (value: string) => {
 
 const blankOwners = () => ({ Lee: "15", Kamm: "15", Sharon: "15" });
 
-function progressLine(campaign: Campaign, estimate: LeadCostEstimate | null) {
+function pounds(usd: number | null | undefined, rate: number) {
+  if (usd == null || !Number.isFinite(usd)) return formatGbp(null);
+  return formatGbp(usdToGbp(usd, rate));
+}
+
+function gbpField(usd: number | null, rate: number) {
+  if (usd == null) return "";
+  const amount = Math.round(usdToGbp(usd, rate) * 100) / 100;
+  return Number.isInteger(amount) ? String(amount) : amount.toFixed(2);
+}
+
+function progressLine(campaign: Campaign, estimate: LeadCostEstimate | null, rate: number) {
   const row = estimate?.campaigns.find((item) => item.code === campaign.code);
   const leads = campaign.totalLeadTarget == null
     ? row?.leadsProduced == null ? "No lead total" : `${row.leadsProduced} leads produced, no total set`
     : row?.leadsProduced == null ? `Lead progress not loaded of ${campaign.totalLeadTarget}` : `${row.leadsProduced} of ${campaign.totalLeadTarget} leads`;
   const spend = campaign.maxSpendUsd == null
-    ? row?.spendToDateUsd == null ? "No maximum spend" : `${formatUsd(row.spendToDateUsd)} spent, no maximum`
-    : row?.spendToDateUsd == null ? `Spend not loaded of ${formatUsd(campaign.maxSpendUsd)}` : `${formatUsd(row.spendToDateUsd)} of ${formatUsd(campaign.maxSpendUsd)}`;
-  return `${leads}. ${spend}.`;
+    ? row?.spendToDateUsd == null ? "No maximum spend" : `${pounds(row.spendToDateUsd, rate)} spent, no maximum`
+    : row?.spendToDateUsd == null ? `Spend not loaded of ${pounds(campaign.maxSpendUsd, rate)}` : `${pounds(row.spendToDateUsd, rate)} of ${pounds(campaign.maxSpendUsd, rate)}`;
+  const count = (value: number | null | undefined) => (value == null ? "not returned" : String(value));
+  const stock = row ? `Bank (qualified) ${count(row.bank)}. Partials to process ${count(row.partialsToProcess)}.` : "Bank figures not loaded.";
+  const left = row?.remainingSpendUsd == null ? "" : ` ${pounds(row.remainingSpendUsd, rate)} left.`;
+  return `${leads}. ${spend}.${left} ${stock}`;
 }
 
 export default function LeadGeneratorPage() {
-  const [access, setAccess] = useState<{ allowed: boolean; cleanseEnabled?: boolean } | null>(null);
+  const [access, setAccess] = useState<{ allowed: boolean; cleanseEnabled?: boolean; usdToGbp?: number } | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [sector, setSector] = useState("");
   const [city, setCity] = useState("");
@@ -149,9 +165,9 @@ export default function LeadGeneratorPage() {
     notes,
     daysToRun: weekdays,
     dailyTarget: Number(dailyTarget),
-    monthlyBudgetUsd: monthlyBudget === "" ? 0 : Number(monthlyBudget),
+    monthlyBudgetGbp: monthlyBudget === "" ? 0 : Number(monthlyBudget),
     totalLeadTarget: totalLeads === "" ? null : Number(totalLeads),
-    maxSpendUsd: maxSpend === "" ? null : Number(maxSpend),
+    maxSpendGbp: maxSpend === "" ? null : Number(maxSpend),
     endDate: endDate || null,
     stream,
     active: true,
@@ -168,8 +184,9 @@ export default function LeadGeneratorPage() {
       )
     : null;
   const listMonth = listDay == null ? null : listPriceMonthlyUsd(listDay, weekdays.length);
+  const rate = typeof access?.usdToGbp === "number" && access.usdToGbp > 0 ? access.usdToGbp : 0.79;
   const leadsForSpend = estimate && maxSpend !== ""
-    ? leadsAtListPrice(Number(maxSpend), estimate.listPrices.placeWithFiltersUsd ?? Number.NaN, estimate.listPrices.linkedinEmailUsd ?? Number.NaN)
+    ? leadsAtListPrice(gbpToUsd(Number(maxSpend), rate), estimate.listPrices.placeWithFiltersUsd ?? Number.NaN, estimate.listPrices.linkedinEmailUsd ?? Number.NaN)
     : null;
   const savedEstimate = estimate?.campaigns.find((row) => row.code === editingCode);
 
@@ -224,7 +241,7 @@ export default function LeadGeneratorPage() {
         setNotice("");
         setError(result.reason || "The mailer blocked this sample before it ran.");
       } else {
-        setNotice(`Sample returned. Cost ${formatUsd(result.apifyCostUsd)}${result.costBasis === "actual" ? " actual" : result.costBasis === "list" ? " at list prices" : ""}.`);
+        setNotice(`Sample returned. Cost ${pounds(result.apifyCostUsd, rate)}${result.costBasis === "actual" ? " actual" : result.costBasis === "list" ? " at list prices" : ""}. Approx, converted from US$.`);
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The sample could not be confirmed.");
@@ -299,9 +316,9 @@ export default function LeadGeneratorPage() {
     setName(campaign.name);
     setNotes(campaign.notes);
     setDailyTarget(String(campaign.dailyTarget));
-    setMonthlyBudget(String(campaign.monthlyBudgetUsd));
+    setMonthlyBudget(gbpField(campaign.monthlyBudgetUsd, rate));
     setTotalLeads(campaign.totalLeadTarget == null ? "" : String(campaign.totalLeadTarget));
-    setMaxSpend(campaign.maxSpendUsd == null ? "" : String(campaign.maxSpendUsd));
+    setMaxSpend(gbpField(campaign.maxSpendUsd, rate));
     setEndDate(campaign.endDate || "");
     setStream(campaign.stream === "reps" ? "reps" : "sarah_mailer");
     setWeekdays(campaign.daysToRun.length ? campaign.daysToRun : [1, 2, 3, 4, 5, 6, 7]);
@@ -395,21 +412,21 @@ export default function LeadGeneratorPage() {
                     <dl className="mt-2 space-y-1">
                       <div className="flex justify-between gap-3"><dt>Basis</dt><dd>{estimate.basis === "actual" ? "Actual" : estimate.basis === "list" ? "List price" : "Not returned"}</dd></div>
                       <div className="flex justify-between gap-3"><dt>Days of data</dt><dd>{estimate.daysOfData ?? "Not returned"}</dd></div>
-                      <div className="flex justify-between gap-3"><dt>Sample of 20 places</dt><dd>{formatUsd(estimate.sample20PlacesUsd)}</dd></div>
-                      <div className="flex justify-between gap-3"><dt>Per qualified lead</dt><dd>{formatUsd(estimate.usdPerQualified)}</dd></div>
-                      <div className="flex justify-between gap-3"><dt>This form per day</dt><dd>{formatUsd(listDay)}</dd></div>
-                      <div className="flex justify-between gap-3"><dt>This form per month</dt><dd>{formatUsd(listMonth)}</dd></div>
+                      <div className="flex justify-between gap-3"><dt>Sample of 20 places</dt><dd>{pounds(estimate.sample20PlacesUsd, rate)}</dd></div>
+                      <div className="flex justify-between gap-3"><dt>Per qualified lead</dt><dd>{pounds(estimate.usdPerQualified, rate)}</dd></div>
+                      <div className="flex justify-between gap-3"><dt>This form per day</dt><dd>{pounds(listDay, rate)}</dd></div>
+                      <div className="flex justify-between gap-3"><dt>This form per month</dt><dd>{pounds(listMonth, rate)}</dd></div>
                     </dl>
                   )}
-                  <p className="mt-2 text-xs text-muted">This form per day and per month is an estimate at list prices. Per day is the daily target times 10 places, plus one email lookup per lead. Per month is that day cost times the ticked weekdays times 4.33. Saved campaigns use the mailer figure.</p>
-                  {savedEstimate && <p className="mt-2 text-xs text-muted">Saved {savedEstimate.code} per day: {formatUsd(savedEstimate.estimatedUsd)}.</p>}
+                  <p className="mt-2 text-xs text-muted">This form per day and per month is an estimate at list prices. Per day is the daily target times 10 places, plus one email lookup per lead. Per month is that day cost times the ticked weekdays times 4.33. Saved campaigns use the mailer figure. Approx, converted from US$.</p>
+                  {savedEstimate && <p className="mt-2 text-xs text-muted">Saved {savedEstimate.code} per day: {pounds(savedEstimate.estimatedUsd, rate)}.</p>}
                 </div>
                 <button type="button" className={`${button} mt-4 w-full`} disabled={!filterCheck.ok || busy === "sample"} onClick={() => void runSample()}>
                   {busy === "sample" ? "Running sample…" : "Run sample"}
                 </button>
                 <h2 className="mt-6 text-sm font-semibold">{editingId ? "Edit campaign" : "Save as campaign"}</h2>
                 <p className="mt-2 text-xs text-muted">Runs every morning until it reaches the total, the maximum spend, or the end date, whichever comes first.</p>
-                <label className="mt-3 block text-xs text-muted">Maximum spend (USD), recommended
+                <label className="mt-3 block text-xs text-muted">Maximum spend (£), recommended
                   <input className={`${field} mt-1`} inputMode="decimal" value={maxSpend} onChange={(event) => setMaxSpend(event.target.value)} placeholder="Leave blank for no lifetime cap" />
                 </label>
                 {maxSpend !== "" && <p className="mt-1 text-xs text-muted">At list prices this spend covers about {leadsForSpend == null ? "an unknown number of" : leadsForSpend} leads.</p>}
@@ -426,7 +443,7 @@ export default function LeadGeneratorPage() {
                 <label className="mt-3 block text-xs text-muted">Daily target
                   <input className={`${field} mt-1`} inputMode="numeric" value={dailyTarget} onChange={(event) => setDailyTarget(event.target.value)} />
                 </label>
-                <label className="mt-3 block text-xs text-muted">Monthly budget USD
+                <label className="mt-3 block text-xs text-muted">Monthly budget (£)
                   <input className={`${field} mt-1`} inputMode="decimal" value={monthlyBudget} onChange={(event) => setMonthlyBudget(event.target.value)} />
                 </label>
                 <fieldset className="mt-3">
@@ -474,7 +491,7 @@ export default function LeadGeneratorPage() {
                   <div className="border-b border-edge px-4 py-3">
                     <h2 className="text-sm font-semibold">Sample leads <span className="font-normal text-muted">{sample?.leads.length ?? ""}</span></h2>
                     {sample?.blocked && <p className="mt-1 text-sm text-rust">Blocked. {sample.reason || "The mailer did not run this sample."}</p>}
-                    {sample && !sample.blocked && <p className="mt-1 text-xs text-muted">Cost {formatUsd(sample.apifyCostUsd)}{sample.costBasis ? ` · ${sample.costBasis}` : ""}</p>}
+                    {sample && !sample.blocked && <p className="mt-1 text-xs text-muted">Cost {pounds(sample.apifyCostUsd, rate)}{sample.costBasis ? ` · ${sample.costBasis}` : ""}. Approx, converted from US$.</p>}
                     {sample && sample.notApplied.length > 0 && <p className="mt-1 text-xs text-muted">Not applied: {sample.notApplied.map(notAppliedLabel).join(", ")}.</p>}
                   </div>
                   <div className="overflow-x-auto">
@@ -509,10 +526,10 @@ export default function LeadGeneratorPage() {
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <h3 className="font-semibold">{campaign.name}</h3>
-                          <p className="mt-1 text-xs text-muted">{campaign.code} · {streamLabel(campaign.stream)} · {campaign.completedAt ? "Completed" : campaign.active ? "Active" : "Inactive"} · {campaign.dailyTarget} a day · {campaign.daysToRun.map(weekdayLabel).filter(Boolean).join(", ") || "No weekdays"} · Budget {formatUsd(campaign.monthlyBudgetUsd)}</p>
-                          <p className="mt-1 text-xs text-muted">{progressLine(campaign, estimate)}</p>
+                          <p className="mt-1 text-xs text-muted">{campaign.code} · {streamLabel(campaign.stream)} · {campaign.completedAt ? "Completed" : campaign.active ? "Active" : "Inactive"} · {campaign.dailyTarget} a day · {campaign.daysToRun.map(weekdayLabel).filter(Boolean).join(", ") || "No weekdays"} · Budget {pounds(campaign.monthlyBudgetUsd, rate)}</p>
+                          <p className="mt-1 text-xs text-muted">{progressLine(campaign, estimate, rate)}</p>
                           {campaign.completedAt && <p className="mt-1 text-xs text-sage">Completed. {campaign.completedReason || "No reason recorded."}</p>}
-                          <p className="mt-1 text-xs text-muted">Spend in the decisions below: {formatUsd(campaign.recentSpendUsd)}</p>
+                          <p className="mt-1 text-xs text-muted">Spend in the decisions below: {pounds(campaign.recentSpendUsd, rate)}. Approx, converted from US$.</p>
                           {campaign.stream === "reps" && <p className="mt-1 text-xs text-muted">{campaign.ownerSplit.map((row) => `${row.owner} ${row.daily}`).join(", ") || "No rep split"}</p>}
                         </div>
                         <div className="flex gap-2">
@@ -528,7 +545,7 @@ export default function LeadGeneratorPage() {
                             <li key={decision.id} className="rounded-lg border border-edge px-3 py-2">
                               <span className="text-xs text-muted">{when(decision.createdAt)} · {decision.step || "Decision"} · before {decision.countBefore}, after {decision.countAfter}</span>
                               <p>{decision.reason || "No reason recorded."}</p>
-                              <p className="text-xs text-muted">Apify {formatUsd(decision.apifyCostUsd)} · Model {formatUsd(decision.modelCostUsd)}</p>
+                              <p className="text-xs text-muted">Apify {pounds(decision.apifyCostUsd, rate)} · Model {pounds(decision.modelCostUsd, rate)}</p>
                             </li>
                           ))}
                         </ul>
@@ -542,7 +559,7 @@ export default function LeadGeneratorPage() {
                   {cleanseRuns.length ? (
                     <ul className="mt-3 space-y-2 text-sm">
                       {cleanseRuns.map((run) => (
-                        <li key={run.id}>{when(run.createdAt)} · before {run.countBefore}, after {run.countAfter} · {run.reason} · Model {formatUsd(run.modelCostUsd)}</li>
+                        <li key={run.id}>{when(run.createdAt)} · before {run.countBefore}, after {run.countAfter} · {run.reason} · Model {pounds(run.modelCostUsd, rate)}</li>
                       ))}
                     </ul>
                   ) : <p className="mt-3 text-sm text-muted">No cleanse runs recorded yet.</p>}
