@@ -1,3 +1,4 @@
+import { crmIdentityError } from '@/lib/crm-identity-error';
 import { NextRequest, NextResponse } from "next/server";
 import { crmBlockerPayload } from "@/lib/crm-blocker";
 import { requireRequestScope } from "@/lib/request-scope";
@@ -259,6 +260,8 @@ export async function GET(
       },
     });
   } catch (err: any) {
+    const identityError = crmIdentityError(err);
+    if (identityError) return identityError;
     return NextResponse.json(
       crmBlockerPayload({
         code: "company_access_not_confirmed",
@@ -491,6 +494,8 @@ export async function PATCH(
       }
     );
   } catch (err: any) {
+    const identityError = crmIdentityError(err);
+    if (identityError) return identityError;
     return NextResponse.json(
       crmBlockerPayload({
         code: "company_update_not_confirmed",
@@ -529,6 +534,8 @@ export async function DELETE(
       );
     return NextResponse.json({ ok: true });
   } catch (err: any) {
+    const identityError = crmIdentityError(err);
+    if (identityError) return identityError;
     return NextResponse.json(
       crmBlockerPayload({
         code: "company_delete_not_confirmed",

@@ -61,6 +61,18 @@ export async function loadAssignedNewLeads(companyId?: string) {
     const lead = projectAssignedLead(company, assignment, viewer, names.get(assignment?.assigned_to_user_id) || 'Assigned teammate', contacts);
     if (lead) leads.push(lead);
   }
+  // Enrich only already-authorised lead IDs. Source text and private attributes never cross this boundary.
+  for (let offset = 0; offset < leads.length; offset += 100) {
+    const { data, error } = await supabaseService.from('sales_lead_sources').select('company_id,campaign,criteria_version,activity,opportunity_id')
+      .eq('workspace_id', scope.workspaceId).in('company_id', leads.slice(offset, offset + 100).map(l => l.id));
+    if (error) throw error;
+    for (const row of data || []) {
+      const lead = leads.find(l => l.id === row.company_id)!;
+      lead.campaign ||= row.campaign || ''; lead.criteriaVersion ||= row.criteria_version || '';
+      lead.activity = { ...lead.activity, ...(row.activity || {}) };
+      lead.opportunityId ||= row.opportunity_id || '';
+    }
+  }
   leads.sort(compareLeadAdded);
   const visibleOwners = new Set(leads.map(l => l.assignedTo));
   return { leads, isOwner, owners: [...names].filter(([id]) => visibleOwners.has(id)).map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name)) };

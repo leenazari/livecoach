@@ -87,6 +87,10 @@
     {
       "path": "/api/cron/lead-cleanse",
       "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/sales-lead-sync",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

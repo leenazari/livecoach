@@ -1,7 +1,9 @@
 'use client';
+import { engagementLabel } from '@/lib/sales-lead-events';
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import NavMenu from '@/components/crm/NavMenu';
+import SalesJourneySwitch from '@/components/crm/SalesJourneySwitch';
 import { clearCrmCache, crmFetch } from '@/lib/crm';
 import { LEAD_STATUSES, LEAD_STATUS_LABELS, LEAD_VIEWS, LEAD_VIEW_LABELS, type AssignedLead, type AssignedLeadList } from '@/lib/assigned-new-leads';
 
@@ -9,6 +11,17 @@ const button = 'inline-flex min-h-10 items-center justify-center rounded-lg bord
 const input = 'min-h-10 rounded-lg border border-edge bg-panel px-3 text-sm';
 function DemoLink({ lead }: { lead: AssignedLead }) {
   return lead.holdingPageUrl ? <a className={`${button} border-amber/40 bg-amber/10 text-amber`} href={lead.holdingPageUrl} target="_blank" rel="noopener noreferrer">Open demo page ↗</a> : <span className="text-xs text-muted">Demo page not supplied</span>;
+}
+function PipelineAction({ lead }: { lead: AssignedLead }) {
+  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [added, setAdded] = useState(false);
+  if (lead.opportunityId || added) return <Link className={button} href="/crm/revenue">View in pipeline →</Link>;
+  return <><button className={button} disabled={busy || ['on_hold', 'not_interested'].includes(lead.status)} onClick={async () => {
+    setBusy(true); setError('');
+    try { const result = await crmFetch<{ ok: boolean; opportunityId?: string; restricted?: boolean }>(`/api/crm/new-leads/${lead.id}/pipeline`, { method: 'POST', body: JSON.stringify({ confirmed: true }) });
+      if (!result.opportunityId) throw new Error(result.restricted ? 'This lead is restricted. Review the company record before contacting.' : 'Check the pipeline before trying again.');
+      setAdded(true); clearCrmCache();
+    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  }}>{busy ? 'Checking pipeline…' : 'Confirm sales opportunity'}</button>{error && <p role="alert" className="max-w-xs text-xs text-rust">{error}</p>}</>;
 }
 function LeadDetails({ lead }: { lead: AssignedLead }) {
   return <div className="grid gap-5 pt-4 text-sm md:grid-cols-2">
@@ -52,7 +65,8 @@ export default function AssignedNewLeads({ onOpenInbound }: { onOpenInbound: () 
   const filtered = !!(owner || status || query || view !== 'all' || demo !== 'any' || contact !== 'any');
   const reset = useCallback(() => { setOwner(''); setStatus(''); setSearch(''); setQuery(''); setView('all'); setDemo('any'); setContact('any'); setSort('newest'); setPage(1); }, []);
   return <><NavMenu /><main className="mx-auto max-w-7xl px-4 pb-28 pt-7 sm:px-7">
-    <header className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs uppercase tracking-widest text-amber">Your assigned sales work</p><h1 className="mt-2 text-3xl font-semibold">New leads</h1><p className="mt-2 text-sm text-muted">{data?.isOwner ? 'All assigned leads. Filter by salesperson to see their list.' : 'Your leads, contact details and personalised demo pages in one place.'}</p><p className="mt-1 text-xs text-muted">These use the existing client records. Importing never sends messages or enrols a campaign.</p></div><div className="flex gap-2">{canReview && <button className={button} onClick={onOpenInbound}>Inbound enquiries</button>}<button className={button} disabled={loading} onClick={() => { clearCrmCache(); setRefresh(v => v + 1); }}>↻ Refresh</button></div></header>
+    <header className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs uppercase tracking-widest text-amber">Your assigned sales work</p><h1 className="mt-2 text-3xl font-semibold">New leads</h1><p className="mt-2 text-sm text-muted">{data?.isOwner ? 'All assigned leads. Filter by salesperson to see their list.' : 'Your leads, contact details and personalised demo pages in one place.'}</p><p className="mt-1 text-xs text-muted">Leads and pipeline share the same companies and contacts. Confirm buyer interest to add an opportunity.</p></div><div className="flex gap-2">{canReview && <button className={button} onClick={onOpenInbound}>Inbound enquiries</button>}<button className={button} disabled={loading} onClick={() => { clearCrmCache(); setRefresh(v => v + 1); }}>↻ Refresh</button></div></header>
+    <SalesJourneySwitch active="leads" />
     <section className="mt-6 rounded-xl border border-edge bg-panel p-4" aria-label="Lead filters">
       <div className="mb-4 flex flex-wrap gap-2" aria-label="Quick lead views">{LEAD_VIEWS.map(v => <button key={v} type="button" aria-pressed={view === v} className={`${button} ${view === v ? 'border-amber bg-amber/10 text-amber' : 'text-muted'}`} onClick={() => { setView(v); setStatus(''); setPage(1); }}>{LEAD_VIEW_LABELS[v]}{data && !loading ? ` · ${data.viewCounts[v] || 0}` : ''}</button>)}</div>
       {view === 'needs_details' && <p className="mb-4 text-xs text-muted">Missing a named contact, demo page, or both email and phone. Do-not-contact records are excluded.</p>}
@@ -76,8 +90,8 @@ export default function AssignedNewLeads({ onOpenInbound }: { onOpenInbound: () 
         <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1.3fr)_minmax(0,.8fr)_auto]">
           <div><Link className="text-lg font-semibold hover:text-amber hover:underline" href={`/crm/${lead.id}`}>{lead.companyName} ↗</Link><p className="mt-1 text-xs text-muted">{lead.ownerName} · Source added {lead.sourceDate || 'date not supplied'}</p><span className={`mt-2 inline-block rounded-full border px-2.5 py-1 text-xs ${['on_hold', 'not_interested'].includes(lead.status) ? 'border-rust/40 text-rust' : lead.status === 'new' ? 'border-sage/40 text-sage' : 'border-sky/40 text-sky'}`}>{LEAD_STATUS_LABELS[lead.status]}</span></div>
           <div className="min-w-0 text-sm"><p className="font-medium">{lead.contactName || 'Contact to confirm'}</p><p className="mt-1 text-xs text-muted">{lead.contactRole}</p>{lead.email && <p className="mt-2 break-all">{['on_hold', 'not_interested'].includes(lead.status) ? lead.email : <a className="text-amber hover:underline" href={`mailto:${lead.email}`}>{lead.email}</a>}</p>}{lead.phone && <p className="mt-1 break-words text-muted">{lead.phone}</p>}</div>
-          <div className="text-xs text-muted"><p>CRM stage</p><p className="mt-1 text-sm text-bone">{lead.stage || 'New'}</p>{lead.emailHistory && <p className="mt-2 text-sky">Email history recorded</p>}{lead.restriction && <p className="mt-2 text-rust">Contact restriction recorded</p>}</div>
-          <div className="flex flex-wrap gap-2 lg:flex-col"><DemoLink lead={lead} /><Link className={button} href={`/crm/${lead.id}#sec-quick-update`}>Open client / log activity</Link></div>
+          <div className="text-xs text-muted"><p>{engagementLabel(lead.activity)}</p><p className="mt-2">Campaign · {lead.campaign || 'Not recorded'}</p>{lead.criteriaVersion && <p>Criteria · {lead.criteriaVersion}</p>}<p className="mt-2">CRM stage</p><p className="mt-1 text-sm text-bone">{lead.stage || 'New'}</p>{lead.emailHistory && <p className="mt-2 text-sky">Email history recorded</p>}{lead.restriction && <p className="mt-2 text-rust">Contact restriction recorded</p>}</div>
+          <div className="flex flex-wrap gap-2 lg:flex-col"><DemoLink lead={lead} /><PipelineAction lead={lead} /><Link className={button} href={`/crm/${lead.id}#sec-quick-update`}>Open company / log activity</Link></div>
         </div><details className="mt-4 border-t border-edge pt-3"><summary className="cursor-pointer text-sm text-amber">Notes, sent dates and evidence</summary><LeadDetails lead={lead} /></details>
       </article>) : !error && <div className="rounded-xl border border-edge bg-panel p-10 text-center"><h2 className="text-xl">{filtered ? 'No matching leads' : 'No leads assigned yet'}</h2><p className="mt-2 text-sm text-muted">{filtered ? 'Try clearing the filters.' : 'Leads assigned to your account will appear here.'}</p></div>}
     </section>

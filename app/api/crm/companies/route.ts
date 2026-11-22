@@ -1,5 +1,7 @@
+import { crmIdentityError } from '@/lib/crm-identity-error';
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { normaliseCompanyDomain } from "@/lib/company-identity";
 import { resolveExistingCompany } from "@/lib/company-resolver";
 import { requireRequestScope } from "@/lib/request-scope";
 import {
@@ -76,6 +78,8 @@ export async function GET(req: NextRequest) {
       : shared;
     return NextResponse.json({ companies: [...(data || []), ...matchingShared] });
   } catch (err: any) {
+    const identityError = crmIdentityError(err);
+    if (identityError) return identityError;
     return NextResponse.json(
       { error: err?.message || "failed to list companies" },
       { status: 500 }
@@ -94,10 +98,11 @@ export async function POST(req: NextRequest) {
 
     // Manual creation should be idempotent. Reuse an exact existing client
     // name (case-insensitive) instead of quietly splitting its history.
+    const inputDomain = normaliseCompanyDomain(body.domain || body.website);
     const existing = await resolveExistingCompany(
       {
-        name,
-        domain: typeof body.domain === "string" ? body.domain : null,
+        name: inputDomain ? null : name,
+        domain: inputDomain || null,
       },
       { select: "*" }
     );
@@ -115,7 +120,7 @@ export async function POST(req: NextRequest) {
     );
     const coverCompanies = await loadTeamLeadCoverCompanies(scope);
     const sharedExisting = [...sharedCompanies, ...coverCompanies].find(
-      (company) => company.name.trim().toLowerCase() === name.toLowerCase()
+      (company) => inputDomain ? normaliseCompanyDomain(company.domain || company.website) === inputDomain : company.name.trim().toLowerCase() === name.toLowerCase()
     );
     if (sharedExisting) {
       return NextResponse.json({
@@ -145,6 +150,8 @@ export async function POST(req: NextRequest) {
     if (error) throw error;
     return NextResponse.json({ company: data });
   } catch (err: any) {
+    const identityError = crmIdentityError(err);
+    if (identityError) return identityError;
     return NextResponse.json(
       { error: err?.message || "failed to create company" },
       { status: 500 }

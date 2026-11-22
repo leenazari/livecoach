@@ -12,6 +12,7 @@ export const LEAD_CONTACT_FILTERS = ['any', 'email', 'phone', 'missing'] as cons
 export const LEAD_SORTS = ['newest', 'oldest', 'company'] as const;
 export type AssignedLead = {
   id: string; companyName: string; website: string; stage: string;
+  campaign?: string; criteriaVersion?: string; activity?: Record<string, string>; opportunityId?: string;
   assignedTo: string; ownerName: string; contactName: string; contactRole: string;
   email: string; emailKind: string; phone: string; linkedinUrl: string;
   holdingPageUrl: string; status: string; sourceStatus: string; sourceDate: string;

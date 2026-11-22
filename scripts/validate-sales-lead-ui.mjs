@@ -1,0 +1,29 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {createRequire} from 'node:module';
+import ts from 'typescript';
+import React,{act} from 'react';
+import {createRoot} from 'react-dom/client';
+import {JSDOM} from 'jsdom';
+const require=createRequire(import.meta.url);
+function load(path,deps={}){const m={exports:{}};const code=ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;new Function('require','module','exports',code)(n=>n==='server-only'?{}:n in deps?deps[n]:require(n),m,m.exports);return m.exports;}
+const events=load('lib/sales-lead-events.ts');
+assert.equal(events.trackingIdentity('javascript:alert(1)'),null);assert.equal(events.trackingIdentity('https://u:p@demo.test/a/p/b'),null);assert.equal(events.replyEvent('out_of_office'),'reply');assert.equal(events.replyEvent('interested'),'positive_reply');
+const link={default:({children,...props})=>React.createElement('a',props,children)};
+const Switch=load('components/crm/SalesJourneySwitch.tsx',{'next/link':link}).default;
+const dom=new JSDOM('<div id="root"></div>',{url:'https://crm.test/crm/new-leads'});Object.assign(globalThis,{window:dom.window,document:dom.window.document,IS_REACT_ACT_ENVIRONMENT:true});
+const lead={id:'00000000-0000-4000-8000-000000000006',companyName:'Example',website:'',ownerName:'Kamm',assignedTo:'kam',status:'contacted',sourceDate:'',stage:'Prospect',email:'buyer@example.test',contactName:'Buyer',holdingPageUrl:'https://demo.test/a/p/b',sourceStatus:'contacted',activity:{demo_start:'2026-11-22T10:00:00Z'},campaign:'C1'};
+let writes=[],fail=false;
+const fetch=async(url,init)=>{if(init?.method==='POST'){writes.push({url,body:JSON.parse(init.body)});if(fail)throw new Error('The result is unknown. Check the pipeline before trying again.');return{ok:true,opportunityId:'deal'};}if(url.includes('/access'))return{canReview:false};return{leads:[lead],isOwner:false,owners:[],total:1,allCount:1,page:1,pageSize:25,viewCounts:{}};};
+const Projection=load('lib/assigned-new-leads.ts');
+const UI=load('components/crm/AssignedNewLeads.tsx',{'next/link':link,'@/components/crm/NavMenu':{default:()=>null},'@/components/crm/SalesJourneySwitch':{default:Switch},'@/lib/crm':{crmFetch:fetch,clearCrmCache(){}},'@/lib/assigned-new-leads':Projection,'@/lib/sales-lead-events':events}).default;
+let root=createRoot(document.getElementById('root'));await act(async()=>root.render(React.createElement(UI,{onOpenInbound(){}})));
+assert.equal(document.querySelector('nav[aria-label="Sales journey"] a[aria-current="page"]').textContent,'New leads');assert.match(document.body.textContent,/Demo started/);assert.match(document.body.textContent,/Campaign · C1/);
+await act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Confirm sales opportunity').click());assert.equal(writes.length,1);assert.equal(writes[0].body.confirmed,true);assert.match(document.body.textContent,/View in pipeline/);await act(async()=>root.unmount());
+fail=true;root=createRoot(document.getElementById('root'));await act(async()=>root.render(React.createElement(UI,{onOpenInbound(){}})));await act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Confirm sales opportunity').click());assert.match(document.querySelector('[role="alert"]').textContent,/unknown/);assert.equal(writes.length,2);await act(async()=>root.unmount());
+// Real Brain report uses one database aggregate and never a lead-table read or LLM.
+let rpcCalls=[];
+const brainDb={rpc:async(name,args)=>{rpcCalls.push({name,args});return{data:{summary:{total:10000},recent:[],limit:12},error:null};},from(){throw new Error('Unexpected broad read');}};
+const brain=load('lib/sales-lead-brain.ts',{'@/lib/sales-lead-service':{salesLeadScope:async()=>({workspaceId:'w',userId:'kam',role:'sales'})},'@/lib/supabase':{supabaseService:brainDb},'@/lib/outreach':{londonDayBounds:()=>({start:'2026-11-22T00:00:00Z'})}});
+assert.equal(await brain.gatherSalesLeadReport('Hello'), '');const report=await brain.gatherSalesLeadReport('How many new leads today?');assert.equal(rpcCalls.length,1);assert.equal(rpcCalls[0].args.p_actor,'kam');assert.match(report,/10000/);assert.ok(report.length<1500);
+console.log('Sales lead real UI, explicit promotion, interrupted response, tracking interpretation and bounded Brain report passed');

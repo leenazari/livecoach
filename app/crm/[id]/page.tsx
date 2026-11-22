@@ -1,4 +1,5 @@
 "use client";
+import ContactEmails from '@/components/crm/ContactEmails';
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
@@ -1354,6 +1355,7 @@ export default function CompanyDetailPage() {
                     <p className="truncate font-mono text-[0.58rem] uppercase tracking-wider text-muted">
                       {[c.role, c.email].filter(Boolean).join(" · ") || "—"}
                     </p>
+                    {access?.mode !== "shared_sales" && <ContactEmails contact={c} onSaved={updateContact} />}
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
                     <Link

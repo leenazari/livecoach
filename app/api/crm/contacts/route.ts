@@ -1,3 +1,4 @@
+import { crmIdentityError } from '@/lib/crm-identity-error';
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { requireRequestScope } from "@/lib/request-scope";
@@ -53,6 +54,8 @@ export async function GET(req: NextRequest) {
     if (error) throw error;
     return NextResponse.json({ contacts: data || [] });
   } catch (err: any) {
+    const identityError = crmIdentityError(err);
+    if (identityError) return identityError;
     console.error("Contact list failed", err?.message || err);
     return NextResponse.json(
       crmBlockerPayload({
@@ -139,9 +142,9 @@ export async function POST(req: NextRequest) {
           ? duplicateQuery.eq("company_id", companyId)
           : duplicateQuery.is("company_id", null)
         ).ilike("name", name);
-    const { data: duplicate, error: duplicateError } = await duplicateQuery
+    const { data: duplicate, error: duplicateError } = email ? await duplicateQuery
       .limit(1)
-      .maybeSingle();
+      .maybeSingle() : { data: null, error: null };
     if (duplicateError) throw duplicateError;
     if (duplicate) {
       if ((duplicate.company_id || null) !== companyId) {
@@ -204,6 +207,8 @@ export async function POST(req: NextRequest) {
       alreadyExists: false,
     });
   } catch (err: any) {
+    const identityError = crmIdentityError(err);
+    if (identityError) return identityError;
     console.error("Contact save failed", err?.message || err);
     return NextResponse.json(
       crmBlockerPayload({

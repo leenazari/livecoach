@@ -1,3 +1,4 @@
+import { gatherSalesLeadReport } from '@/lib/sales-lead-brain';
 import { logBrainAudit } from '@/lib/brain-audit';
 import { loadTeamLeadCoverCompanies, loadTeamLeadCoverCompany, teamLeadCoverEnabled } from "@/lib/team-lead-cover";
 import { NextRequest, NextResponse } from "next/server";
@@ -2406,7 +2407,7 @@ export async function POST(req: NextRequest) {
       }
       const wantsOutreachDetail =
         /\b(outreach|prospect|campaign|cold email|sequence|reply|replies|linkedin|send today|approved|priority|priorities|what.*next)\b/i.test(contextMessage);
-      const [digest, outreach, callPrep, callTranscript, documentContext, ...details] = await Promise.all([
+      const [digest, outreach, callPrep, callTranscript, documentContext, salesLeads, ...details] = await Promise.all([
         gatherGlobalContext(contextMessage),
         gatherOutreachContext(contextMessage, { detailed: wantsOutreachDetail }),
         gatherUpcomingCallPrepContext(contextMessage),
@@ -2415,6 +2416,7 @@ export async function POST(req: NextRequest) {
           focusCompanyId: focus,
         }),
         documentBrainContext(contextMessage),
+        gatherSalesLeadReport(contextMessage),
         ...namedWorkstreams.map(async (thread) => {
           const memory = await getCommercialMemoryBlock(
             thread.companyId,
@@ -2437,7 +2439,7 @@ export async function POST(req: NextRequest) {
       const detailBlocks = (details as (string | null)[]).filter(
         (d): d is string => !!d && d.trim().length > 0
       );
-      const wider = [callTranscript, callPrep, documentContext, digest, outreach]
+      const wider = [callTranscript, callPrep, documentContext, digest, outreach, salesLeads]
         .filter(Boolean)
         .join("\n\n==========\n\n");
       if (!detailBlocks.length) return wider || null;

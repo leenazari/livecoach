@@ -1,3 +1,4 @@
+import { crmIdentityError } from '@/lib/crm-identity-error';
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { requireRequestScope } from "@/lib/request-scope";
@@ -204,6 +205,8 @@ export async function PATCH(
           })(),
     });
   } catch (err: any) {
+    const identityError = crmIdentityError(err);
+    if (identityError) return identityError;
     const message = err?.message || "failed to update contact";
     return NextResponse.json(
       { error: message },
@@ -230,6 +233,8 @@ export async function DELETE(
       return NextResponse.json({ error: "contact not found" }, { status: 404 });
     return NextResponse.json({ ok: true });
   } catch (err: any) {
+    const identityError = crmIdentityError(err);
+    if (identityError) return identityError;
     return NextResponse.json(
       { error: err?.message || "failed to delete contact" },
       { status: 500 }
