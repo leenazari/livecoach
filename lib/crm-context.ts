@@ -1,3 +1,4 @@
+import { loadVisibleOpportunities } from "@/lib/opportunity-access";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { clampOutreachDailyLimit, londonDayBounds } from "@/lib/outreach";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
@@ -482,12 +483,15 @@ export async function gatherGlobalContext(
     .select("company_id")
     .eq("status", "draft")
     .limit(500);
-  let opportunitiesQuery = supabaseAdmin
-    .from("opportunities")
-    .select("company_id, value, opportunity_type")
-    .eq("status", "open")
-    .eq("opportunity_type", "revenue")
-    .limit(500);
+  const opportunitiesQuery = requestScope
+    ? loadVisibleOpportunities(requestScope, {
+        select: "id,company_id,value,opportunity_type,workspace_id,owner_id,visibility,assigned_to_user_id",
+        status: "open",
+        opportunityType: "revenue",
+        mineOnly: true,
+        limit: 500,
+      })
+    : Promise.resolve([]);
   let tasksQuery = supabaseAdmin
     .from("tasks")
     .select("id, company_id, owner_id, text, kind, payload")
@@ -502,13 +506,10 @@ export async function gatherGlobalContext(
   if (requestScope && requestScope.role !== "owner") {
     companiesQuery = companiesQuery.eq("owner_id", requestScope.userId);
     draftsQuery = draftsQuery.eq("owner_id", requestScope.userId);
-    opportunitiesQuery = opportunitiesQuery.or(
-      `owner_id.eq.${requestScope.userId},assigned_to_user_id.eq.${requestScope.userId}`
-    );
     tasksQuery = tasksQuery.eq("owner_id", requestScope.userId);
     callsQuery = callsQuery.eq("owner_id", requestScope.userId);
   }
-  const [companiesRes, draftsRes, oppsRes, tasksRes, callsRes] =
+  const [companiesRes, draftsRes, pipelineOpportunities, tasksRes, callsRes] =
     await Promise.all([
       companiesQuery,
       draftsQuery,
@@ -530,8 +531,10 @@ export async function gatherGlobalContext(
       sharedIds.filter((id) => !ownedIds.has(id)),
       requestScope.workspaceId
     );
-    const coverCompanies = await loadTeamLeadCoverCompanies(requestScope);
-    companies = [...new Map([...companies, ...sharedCompanies, ...coverCompanies.filter((row) => !ownedIds.has(row.id))].map((row) => [row.id, row])).values()];
+    const pipelineCompanyIds = new Set(pipelineOpportunities.map((deal) => deal.company_id));
+    const coverCompanies = (await loadTeamLeadCoverCompanies(requestScope))
+      .filter((row) => pipelineCompanyIds.has(row.id) && !ownedIds.has(row.id));
+    companies = [...new Map([...companies, ...sharedCompanies, ...coverCompanies].map((row) => [row.id, row])).values()];
   }
   if (companies.length === 0) {
     return requestScope && requestScope.role !== "owner"
@@ -550,7 +553,7 @@ export async function gatherGlobalContext(
   }
   const oppCount = new Map<string, number>();
   const oppValue = new Map<string, number>();
-  for (const o of oppsRes.data || []) {
+  for (const o of pipelineOpportunities) {
     if (!o.company_id) continue;
     oppCount.set(o.company_id, (oppCount.get(o.company_id) || 0) + 1);
     oppValue.set(
@@ -585,7 +588,7 @@ export async function gatherGlobalContext(
         "SCHEDULE LOOKUP - the client pipeline roll-up is deliberately omitted because it is not needed for this answer.",
       ]
     : [
-        "YOUR CLIENTS AND PIPELINE - the most actionable clients, one compact line each. The named-client memory above is authoritative for a specific person. This roll-up is for prioritisation without loading every full record.",
+        "YOUR CLIENTS AND PIPELINE - only deals assigned to this account, or its own legacy records with no assignee, count towards its personal pipeline. A client listed here without an open opportunity is client context only. The named-client memory above is authoritative for a specific person. This roll-up is for prioritisation without loading every full record.",
         "",
       ];
   const activityScore = (c: any) =>
@@ -736,9 +739,7 @@ export async function gatherGlobalContext(
         }${u.prepped ? " [prepped]" : ""}${
           hiddenByStaleCompletion
             ? " [HIDDEN FROM CALLS LIST BY A STALE COMPLETION MARKER]"
-            : u.completed_at
-              ? " [COMPLETED]"
-              : " [OPEN IN CRM - NO COMPLETION MARKER]"
+            : ""
         } - prep page: ${prepUrl}${
           asksForJoinLink && u.meeting_url
             ? ` - requested join link: ${u.meeting_url}`

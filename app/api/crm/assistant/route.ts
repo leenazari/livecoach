@@ -1,4 +1,3 @@
-import { gatherSalesLeadReport } from '@/lib/sales-lead-brain';
 import { logBrainAudit } from '@/lib/brain-audit';
 import { loadTeamLeadCoverCompanies, loadTeamLeadCoverCompany, teamLeadCoverEnabled } from "@/lib/team-lead-cover";
 import { NextRequest, NextResponse } from "next/server";
@@ -2407,7 +2406,7 @@ export async function POST(req: NextRequest) {
       }
       const wantsOutreachDetail =
         /\b(outreach|prospect|campaign|cold email|sequence|reply|replies|linkedin|send today|approved|priority|priorities|what.*next)\b/i.test(contextMessage);
-      const [digest, outreach, callPrep, callTranscript, documentContext, salesLeads, ...details] = await Promise.all([
+      const [digest, outreach, callPrep, callTranscript, documentContext, ...details] = await Promise.all([
         gatherGlobalContext(contextMessage),
         gatherOutreachContext(contextMessage, { detailed: wantsOutreachDetail }),
         gatherUpcomingCallPrepContext(contextMessage),
@@ -2416,7 +2415,6 @@ export async function POST(req: NextRequest) {
           focusCompanyId: focus,
         }),
         documentBrainContext(contextMessage),
-        gatherSalesLeadReport(contextMessage),
         ...namedWorkstreams.map(async (thread) => {
           const memory = await getCommercialMemoryBlock(
             thread.companyId,
@@ -2439,7 +2437,7 @@ export async function POST(req: NextRequest) {
       const detailBlocks = (details as (string | null)[]).filter(
         (d): d is string => !!d && d.trim().length > 0
       );
-      const wider = [callTranscript, callPrep, documentContext, digest, outreach, salesLeads]
+      const wider = [callTranscript, callPrep, documentContext, digest, outreach]
         .filter(Boolean)
         .join("\n\n==========\n\n");
       if (!detailBlocks.length) return wider || null;
@@ -2551,7 +2549,7 @@ export async function POST(req: NextRequest) {
         : coverAllowed ? `TEAM LEAD COVER is enabled by the workspace owner. This active member may read and update ordinary sales leads, their sales contacts, manual lead notes and revenue opportunities returned by the verified CRM context, even when assigned to a colleague. Preserve the assignee unless an authorised assignment action explicitly changes it. Confidential, internal, investor and strategic records, personal mailboxes, transcripts, documents and private Brain history remain restricted. Outreach sending, tasks and connected accounts retain their separate assignment rules. Do not ask for reassignment merely to update a permitted sales lead.`
         : `You are assisting a restricted workspace member. Only the verified workspace owner has the full Brain view. Use this member's own private records and the safe high-level context of clients the owner has explicitly shared with the team. Shared client access is lookup access only. It does not reveal the owner's private notes, email, calls, transcripts, calendar, documents, Brain history or opportunity details assigned to somebody else. Only recommend or action opportunities, outreach prospects and work assigned to this member. Never reveal or search an unshared client or another person's private records, even if the member names them or directly asks. Team campaign names and non-sensitive aggregate learnings may be used only as shared context. Treat unassigned outreach prospects only as available to claim. If permitted records do not contain the answer, say this account does not have access and ask the owner to share or assign the record.`;
     const scope = isGlobal
-      ? `${accessBoundary}\n\nYou are the user's overall CRM assistant. You know the clients and pipeline this verified account is permitted to access below. They might ask about one client ("what do I do next with Alaine"), or across their permitted work ("what's my to-do list", "which deal is closest to closing"). When they name a client, match it to the closest permitted one in the context even if the spelling is slightly off. Never imply that inaccessible or unassigned records belong to them.`
+      ? `${accessBoundary}\n\nYou are the user's overall CRM assistant. You know the clients and pipeline this verified account is permitted to access below. They might ask about one client ("what do I do next with Alaine"), or across their permitted work ("what's my to-do list", "which deal is closest to closing"). When they name a client, match it to the closest permitted one in the context even if the spelling is slightly off. For personal pipeline questions use the personal pipeline roll-up. Team Lead Cover, meeting attendance and access to a client never establish deal assignment. Only attribute a deal to the user when they are its assignee or, for a record with no assignee, its owner.`
       : `${accessBoundary}\n\nYou are the user's strategic co-founder and CRM assistant. They are currently on ONE client's page, so by default answer about that client (the FOCUSED CLIENT below) and help move that relationship forward. But you are NOT limited to them - the user may bring up another permitted client, a fresh idea, their week, or anything at all, and you should help with whatever they raise, drawing only on the permitted pipeline below. Whatever the topic, help them plan, prep and take action without crossing the account boundary.`;
     const qBlock = brainQuestions
       ? `\n\nTHINGS YOU ARE TRYING TO LEARN (open questions about the user's business that would make you sharper). When it fits naturally, when the user asks what you need, or when you are brainstorming, raise one or two of these - never the whole list and never force them. When the user answers, weave it into your reply and treat it as fact from then on:\n${brainQuestions}`
@@ -2694,7 +2692,6 @@ BATCH APPROVAL: when the user asks for several safe internal changes, emit them 
 NO SILENT FAILURES: if a requested edit cannot be matched or completed, the action panel will mark it Not completed. Never imply that an edit happened merely because you described it in prose.
 When a call is cancelled or has moved off the calendar, use cancel_call (it removes the call and its prep to-do and records the reason). If there are also leftover to-dos or drafts about that call, propose dismissing those too. If you are not sure which call, client, draft or to-do the user means, ask them to clarify in your prose reply rather than guessing (the system will also offer a pick-list if more than one record matches the name).
 When the calendar context marks a future event as HIDDEN FROM CALLS LIST BY A STALE COMPLETION MARKER and the user asks why it is missing or asks to bring it back, use restore_call in the same reply. Do not tell them to refresh because refresh cannot repair that stored state.
-Only diagnose a stale completion marker when that exact event has the explicit HIDDEN marker in the current calendar context. OPEN IN CRM - NO COMPLETION MARKER means the meeting is already synced and open. Never claim a completion marker is hiding it or propose restore_call for that open event. Give its supplied direct call link and direct the user to Calls. The sales inbox's outreach-only view does not list calls, but do not claim that explains their screen unless its current filter is known. If the evidence does not explain a missing item, say the cause is not confirmed rather than inventing one. Current saved status takes precedence over earlier chat claims.
 Refer to the call, client, draft or to-do by the exact name/title/text shown in the context so it can be matched. Each one is shown to the user with a Confirm button and nothing happens until they tap it, so never say it is done.
 
 NEW PEOPLE: when the user introduces or talks about a person or company who is a contact, prospect, partner or lead and is NOT already in the context, proactively OFFER to create their profile with create_client, capturing what you know in the brief, so future calls and notes track against them. Suggest it early rather than waiting to be asked twice.
