@@ -401,7 +401,7 @@ function NavMenuInner({
   }
 
   return (
-    <aside className="fixed left-0 top-0 z-50 flex h-full w-60 flex-col border-r border-edge bg-panel">
+    <aside className="lc-navy-nav fixed left-0 top-0 z-50 flex h-full w-60 flex-col border-r border-edge bg-panel">
       <div className="flex items-center justify-between px-5 py-4">
         <LiveCoachLogo markClassName="h-8 w-8" wordmarkClassName="font-display text-[1.15rem] tracking-tight" />
         <button
