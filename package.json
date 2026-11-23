@@ -6,6 +6,7 @@
     "node": "22.x"
   },
   "scripts": {
+    "validate:call-recap-emails": "node scripts/validate-call-recap-emails.mjs",
     "validate:calendar-sync-confirmation": "node scripts/validate-calendar-sync-confirmation.mjs",
     "validate:team-calls-navigation": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-personal-calls-first.mjs",
     "validate:assigned-new-leads": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-assigned-new-leads.mjs && node scripts/validate-sheet-lead-import.mjs",

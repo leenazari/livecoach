@@ -1,6 +1,10 @@
 {
   "crons": [
     {
+      "path": "/api/cron/call-recap-emails",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/calendar-notifications",
       "schedule": "*/15 * * * *"
     },
