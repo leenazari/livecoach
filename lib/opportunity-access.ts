@@ -11,6 +11,7 @@ import {
 import { loadTeamLeadCoverCompanies, loadTeamLeadCoverCompany, teamLeadCoverEnabled } from "@/lib/team-lead-cover";
 
 type LoadOptions = {
+  mineOnly?: boolean;
   select?: string;
   status?: string;
   opportunityType?: string;
@@ -44,6 +45,11 @@ function buildOpportunityQuery(scope: RequestScope, options: LoadOptions, client
     .from("opportunities")
     .select(options.select || "*")
     .eq("workspace_id", scope.workspaceId);
+  if (options.mineOnly) {
+    query = query.or(
+      `assigned_to_user_id.eq.${scope.userId},and(assigned_to_user_id.is.null,owner_id.eq.${scope.userId})`
+    );
+  }
   if (options.status) query = query.eq("status", options.status);
   if (options.opportunityType)
     query = query.eq("opportunity_type", options.opportunityType);
@@ -98,7 +104,7 @@ export async function loadVisibleOpportunities<T = Record<string, any>>(
       limit,
     });
     if (error) throw error;
-    const covered = await loadCoveredOpportunities(scope, { ...options, limit });
+    const covered = options.mineOnly ? [] : await loadCoveredOpportunities(scope, { ...options, limit });
     const byId = new Map([...(data || []), ...covered].map((row) => [row.id, row]));
     return sortRows([...byId.values()], options).slice(0, limit) as T[];
   }
@@ -130,7 +136,9 @@ export async function loadVisibleOpportunities<T = Record<string, any>>(
       .map((row) => row.company_id || "")
   );
   const visible = filterVisibleOpportunities(scope, candidates, safeCompanyIds);
-  visible.push(...await loadCoveredOpportunities(scope, { ...options, limit }));
+  if (!options.mineOnly) {
+    visible.push(...await loadCoveredOpportunities(scope, { ...options, limit }));
+  }
   const byId = new Map(visible.map((row) => [String(row.id), row]));
   return sortRows([...byId.values()], options).slice(0, limit) as T[];
 }

@@ -10,10 +10,8 @@ export function opportunityMatchesOwner(
 ): boolean {
   if (ownerFilter === "all") return true;
   if (ownerFilter === "mine")
-    return (
-      row.owner_id === currentUserId ||
-      row.assigned_to_user_id === currentUserId
-    );
+    return Boolean(currentUserId) &&
+      (row.assigned_to_user_id ?? row.owner_id) === currentUserId;
   if (ownerFilter === "unassigned") return !row.assigned_to_user_id;
   return row.assigned_to_user_id === ownerFilter;
 }
