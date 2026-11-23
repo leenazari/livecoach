@@ -306,7 +306,7 @@ function NavMenuInner({
       <>
         {mobileMore && (
           <div className="fixed inset-0 z-[49] flex items-end bg-ink/70 px-3 pb-20 backdrop-blur-sm" onClick={() => setMobileMore(false)}>
-            <div className="w-full rounded-2xl border border-edge bg-panel p-3 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="max-h-[calc(100dvh-7rem)] w-full overflow-y-auto rounded-2xl border border-edge bg-panel p-3 shadow-2xl" onClick={(e) => e.stopPropagation()}>
               <div className="mb-2 flex items-center justify-between px-2">
                 <span className="font-mono text-[0.62rem] uppercase tracking-wider text-amber">More</span>
                 <button type="button" onClick={() => setMobileMore(false)} aria-label="Close more menu" className="h-11 w-11 rounded-full text-muted">✕</button>
@@ -347,7 +347,7 @@ function NavMenuInner({
         )}
         <nav
           aria-label="Main navigation"
-          className="fixed inset-x-0 bottom-0 z-50 flex items-stretch justify-around border-t border-edge bg-panel/95 backdrop-blur"
+          className="lc-navy-nav fixed inset-x-0 bottom-0 z-50 flex items-stretch justify-around border-t border-edge bg-panel/95 backdrop-blur"
           style={{ paddingBottom: "max(0.2rem, env(safe-area-inset-bottom))" }}
         >
           {BOTTOM.map((t) => {
@@ -362,14 +362,14 @@ function NavMenuInner({
                   active ? "text-amber" : "text-muted"
                 }`}
               >
-                <span className={center ? "-mt-3 flex h-11 w-11 items-center justify-center rounded-full border border-amber/60 bg-amber/20 text-[1.1rem] leading-none text-amber" : "text-[1.05rem] leading-none"}>
+                <span className={center ? "-mt-3 flex h-11 w-11 items-center justify-center rounded-full border border-sage/60 bg-sage/20 text-[1.1rem] leading-none text-sage" : "text-[1.05rem] leading-none"}>
                   {t.icon}
                 </span>
                 {t.label}
               </Link>
             );
           })}
-          <button type="button" onClick={() => setMobileMore(true)} aria-expanded={mobileMore} className={`relative flex min-h-14 flex-1 flex-col items-center justify-end gap-1 py-2 font-mono text-[0.55rem] uppercase tracking-wider ${mobileMore ? "text-amber" : "text-muted"}`}>
+          <button type="button" onClick={() => setMobileMore(open => !open)} aria-expanded={mobileMore} className={`relative flex min-h-14 flex-1 flex-col items-center justify-end gap-1 py-2 font-mono text-[0.55rem] uppercase tracking-wider ${mobileMore ? "text-amber" : "text-muted"}`}>
             {notificationCount > 0 ? (
               <span className="absolute right-[28%] top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-rust px-1 text-[0.45rem] text-bone">
                 {notificationCount > 9 ? "9+" : notificationCount}
@@ -401,7 +401,7 @@ function NavMenuInner({
   }
 
   return (
-    <aside className="fixed left-0 top-0 z-50 flex h-full w-60 flex-col border-r border-edge bg-panel">
+    <aside className="lc-navy-nav fixed left-0 top-0 z-50 flex h-full w-60 flex-col border-r border-edge bg-panel">
       <div className="flex items-center justify-between px-5 py-4">
         <LiveCoachLogo markClassName="h-8 w-8" wordmarkClassName="font-display text-[1.15rem] tracking-tight" />
         <button
