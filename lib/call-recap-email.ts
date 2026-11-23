@@ -142,15 +142,22 @@ export async function processCallRecapEmail(id: string) {
     let recap = row.source_hash === sourceHash && row.recap?.version === 1 ? row.recap : null;
     if (!recap) {
       const host = await loadHostIdentityForUser(scope.userId, scope.workspaceId);
-      const response = await openai.messages.create({ model: OPENAI_MODEL_LIVE, max_tokens: 3800, temperature: 0,
-        system: CALL_RECAP_INSTRUCTIONS,
-        response_format: CALL_RECAP_FORMAT,
-        messages: [{ role: "user", content: JSON.stringify({ hostName: host.name, passages: callRecapPassages(transcript) }) }],
-      });
-      await logModelUsage("call_recap_email", "live", (response as any).usage, { stop_reason: response.stop_reason, receipt_id: id }, scope);
-      let parsed: any;
-      if (response.stop_reason === "max_tokens") throw new Error("RECAP_REVIEW_REQUIRED_FORMAT");
-      try { parsed = JSON.parse(textOf(response)); } catch { throw new Error("RECAP_REVIEW_REQUIRED_FORMAT"); }
+      let parsed: any = row.source_hash === sourceHash && row.recap?.version === 0 ? row.recap.proposed : null;
+      if (!parsed) {
+        const response = await openai.messages.create({ model: OPENAI_MODEL_LIVE, max_tokens: 3800, temperature: 0,
+          system: CALL_RECAP_INSTRUCTIONS,
+          response_format: CALL_RECAP_FORMAT,
+          messages: [{ role: "user", content: JSON.stringify({ hostName: host.name, passages: callRecapPassages(transcript) }) }],
+        });
+        await logModelUsage("call_recap_email", "live", (response as any).usage, { stop_reason: response.stop_reason, receipt_id: id }, scope);
+        if (response.stop_reason === "max_tokens") throw new Error("RECAP_REVIEW_REQUIRED_FORMAT");
+        try { parsed = JSON.parse(textOf(response)); } catch { throw new Error("RECAP_REVIEW_REQUIRED_FORMAT"); }
+        // Private, unapproved proposal with passage IDs only, no copied source.
+        // It is NEVER eligible for sending or returned by the browser API.
+        // Keeping it allows a failed check to be diagnosed without paying to
+        // re-extract the unchanged call. Only version 1 has passed both checks.
+        await update({ recap: { version: 0, proposed: parsed }, source_hash: sourceHash });
+      }
       recap = validateReferencedCallRecap(parsed, transcript, host.name || "");
       // Separate, small privacy/grounding check. Only the proposed bullets and
       // exact supporting quotes are sent, never any CRM/coaching context.
