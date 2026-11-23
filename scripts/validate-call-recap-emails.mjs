@@ -26,6 +26,22 @@ const proposed = { shareable: true,
   secretInternalField: "PRIVATE_NEGOTIATION_LIMIT",
 };
 const recap = content.validateCallRecap(proposed, transcript, "Lee");
+const referencesFor = (draft, source) => {
+  const passages = content.callRecapPassages(source);
+  const reference = ({ evidence, ...item }) => ({ ...item, evidenceId: passages.find(p => p.text === evidence)?.id });
+  return { shareable: draft.shareable, points: draft.points.map(reference), decisions: draft.decisions.map(reference), actions: draft.actions.map(reference) };
+};
+const referenced = referencesFor(proposed, transcript);
+assert.deepEqual(plain(content.validateReferencedCallRecap(referenced, transcript, "Lee").actions.map(a => a.owner)), ["Jane", "Lee"]);
+assert.throws(() => content.validateReferencedCallRecap({ ...referenced, points: [{ text: "A claim", evidenceId: 999 }] }, transcript, "Lee"), /RECAP_REVIEW_REQUIRED_EVIDENCE/);
+assert.throws(() => content.validateReferencedCallRecap({ ...referenced, actions: [{ ...referenced.actions[0], owner: "Sharon", evidence: "Sharon: I will send the requirements by Friday.", evidenceSpeaker: "Sharon" }] }, transcript, "Lee"), /RECAP_REVIEW_REQUIRED_ACTION/);
+const longSource = `Jane Lewis: ${"We discussed the demonstration. ".repeat(25)}I will send the requirements by Friday.`;
+const longPassages = content.callRecapPassages(longSource);
+assert.ok(longPassages.length > 1);
+assert.ok(longPassages.every(p => p.text.length <= 650 && longSource.includes(p.text) && p.speaker === "Jane Lewis"));
+assert.ok(content.callRecapPassages(`${transcript}\nYou: Off the record, this is our private negotiation leverage.`).every(p => !p.text.includes("Off the record")), "Known sensitive passages never enter the extraction prompt");
+const longRecap = content.validateReferencedCallRecap({ shareable: true, points: [], decisions: [], actions: [{ task: "Send the requirements", owner: "Jane Lewis", due: "Friday", evidenceId: longPassages.at(-1).id }] }, longSource, "Lee");
+assert.equal(longRecap.actions[0].evidenceSpeaker, "Jane Lewis", "Split utterance retains server-verified speaker provenance");
 assert.equal(recap.actions[1].owner, "Lee");
 const email = content.renderCallRecap(recap, "2026-11-23T15:15:00Z");
 assert.match(email.text, /Next actions/);
@@ -113,7 +129,12 @@ const deps = {
       assert.equal(p.response_format.strict, true);
       if (modelResponse) return modelResponse;
     }
-    return { content: [{ type: "text", text: review ? hold ? "HOLD" : "APPROVE" : JSON.stringify(proposed) }], usage: {} };
+    if (!review) {
+      const input = JSON.parse(p.messages[0].content);
+      assert.ok(input.passages.every(part => transcript.includes(part.text)), "Evidence passages are literal canonical source text");
+      assert.equal(input.transcript, undefined, "Source text is passed once, as bounded references");
+    }
+    return { content: [{ type: "text", text: review ? hold ? "HOLD" : "APPROVE" : JSON.stringify(referenced) }], usage: {} };
   } } } },
   "@/lib/usage": { logModelUsage: async () => {} }, "@/lib/call-recap": content,
 };
@@ -143,7 +164,7 @@ assert.match(rows.call_recap_emails[0].last_error, /privacy check could not appr
 reset(); modelResponse = { content: [{ type: "text", text: "{truncated" }], stop_reason: "max_tokens" };
 await worker.processCallRecapEmail("receipt"); assert.equal(sent.length, 0); assert.equal(modelCalls, 1);
 assert.match(rows.call_recap_emails[0].last_error, /not returned in a complete readable format/);
-reset(); modelResponse = { content: [{ type: "text", text: JSON.stringify({ ...proposed, actions: [{ ...proposed.actions[0], due: "Wednesday" }] }) }] };
+reset(); modelResponse = { content: [{ type: "text", text: JSON.stringify({ ...referenced, actions: [{ ...referenced.actions[0], due: "Wednesday" }] }) }] };
 await worker.processCallRecapEmail("receipt"); assert.equal(sent.length, 0); assert.equal(modelCalls, 1);
 assert.match(rows.call_recap_emails[0].last_error, /action owner, date or supporting quote/);
 reset(); sendFailure = true;
