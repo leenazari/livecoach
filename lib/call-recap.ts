@@ -24,21 +24,50 @@ const norm = (s: string) => s.toLowerCase().replace(/[’‘]/g, "'").replace(/\
 // A conservative second barrier, not a claim that keyword matching proves privacy.
 const SENSITIVE = /(?:https?:\/\/|www\.|\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b|\b(?:off[ -]the[ -]record|confidential|between us|private note|internal (?:note|strategy|cost|margin)|profit margin|walk[ -]away|reservation price|discount ceiling|negotiat\w* (?:leverage|tactic)|buying signal|close probability|win probability|coaching|scorecard|password|access token|bank account|medical|diagnos\w*|bereave\w*|funeral|divorc\w*|investor|fundrais\w*|valuation|runway)\b)/i;
 const field = (v: unknown, max: number) => typeof v === "string" && v.trim().length <= max ? v.trim() : "";
+const reviewRequired = (reason: string): never => { throw new Error(`RECAP_REVIEW_REQUIRED_${reason}`); };
+
+const pointSchema = { type: "object", additionalProperties: false, required: ["text", "evidence"],
+  properties: { text: { type: "string" }, evidence: { type: "string" } } };
+export const CALL_RECAP_FORMAT = {
+  type: "json_schema", name: "shareable_call_recap", strict: true,
+  schema: { type: "object", additionalProperties: false, required: ["shareable", "points", "decisions", "actions"],
+    properties: {
+      shareable: { type: "boolean" },
+      points: { type: "array", items: pointSchema }, decisions: { type: "array", items: pointSchema },
+      actions: { type: "array", items: { type: "object", additionalProperties: false, required: ["task", "owner", "due", "evidence"],
+        properties: { task: { type: "string" }, owner: { type: ["string", "null"] }, due: { type: ["string", "null"] }, evidence: { type: "string" } } } },
+    },
+  },
+};
+
+export function callRecapReviewMessage(code: string) {
+  const reasons: Record<string, string> = {
+    FORMAT: "The recap was not returned in a complete readable format.",
+    LIMITS: "The recap was too long to verify safely.",
+    EVIDENCE: "A supporting quote could not be matched exactly to this call.",
+    CONTENT: "The recap included an incomplete or sensitive point.",
+    ACTION: "An action owner, date or supporting quote could not be verified safely.",
+    EMPTY: "There were no suitable business points to share.",
+    PRIVACY: "The privacy check could not approve the recap for forwarding.",
+  };
+  return `${reasons[code.replace("RECAP_REVIEW_REQUIRED_", "")] || "The recap needs a privacy or accuracy review."} Nothing was emailed. Your transcript and call summary are still saved.`;
+}
 
 export function validateCallRecap(input: any, transcript: string, hostName: string): CallRecap {
-  if (!input || input.shareable !== true || !Array.isArray(input.points) || !Array.isArray(input.decisions) || !Array.isArray(input.actions))
-    throw new Error("RECAP_REVIEW_REQUIRED");
+  if (!input || !Array.isArray(input.points) || !Array.isArray(input.decisions) || !Array.isArray(input.actions))
+    reviewRequired("FORMAT");
+  if (input.shareable !== true) reviewRequired("EMPTY");
   if (input.points.length > 6 || input.decisions.length > 4 || input.actions.length > 10)
-    throw new Error("RECAP_REVIEW_REQUIRED");
+    reviewRequired("LIMITS");
   const source = norm(transcript);
   const ground = (e: unknown) => {
     const evidence = field(e, 700);
-    if (evidence.length < 12 || !source.includes(norm(evidence))) throw new Error("RECAP_REVIEW_REQUIRED");
+    if (evidence.length < 12 || !source.includes(norm(evidence))) reviewRequired("EVIDENCE");
     return evidence;
   };
   const points = (items: any[]): RecapPoint[] => items.map(p => {
     const text = field(p?.text, 320), evidence = ground(p?.evidence);
-    if (!text || SENSITIVE.test(text) || SENSITIVE.test(evidence)) throw new Error("RECAP_REVIEW_REQUIRED");
+    if (!text || SENSITIVE.test(text) || SENSITIVE.test(evidence)) reviewRequired("CONTENT");
     return { text, evidence };
   });
   const actions = input.actions.map((a: any) => {
@@ -50,13 +79,13 @@ export function validateCallRecap(input: any, transcript: string, hostName: stri
         (owner && !hostAlias && !norm(evidence).includes(norm(owner))) ||
         (due && !norm(evidence).includes(norm(due))) ||
         SENSITIVE.test([task, owner, due, evidence].join(" ")))
-      throw new Error("RECAP_REVIEW_REQUIRED");
+      reviewRequired("ACTION");
     return { task, owner, due, evidence };
   });
   const participants = Array.from(new Set(Array.from(transcript.matchAll(/^([A-Za-z][\w .'-]{1,60}):\s/gm), m => m[1].trim())))
     .filter(name => !/^(you|interviewer|speaker\s*\d*|unknown|system|note)$/i.test(name) && !SENSITIVE.test(name)).slice(0, 4);
   const result: CallRecap = { version: 1, participants, points: points(input.points), decisions: points(input.decisions), actions };
-  if (!result.points.length && !result.decisions.length && !result.actions.length) throw new Error("RECAP_REVIEW_REQUIRED");
+  if (!result.points.length && !result.decisions.length && !result.actions.length) reviewRequired("EMPTY");
   return result;
 }
 

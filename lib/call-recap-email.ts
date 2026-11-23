@@ -7,13 +7,12 @@ import { connectedMailProvider, sendConnectedMail } from "@/lib/mail";
 import { loadHostIdentityForUser } from "@/lib/speakers";
 import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
-import { CALL_RECAP_KEY, CALL_RECAP_CURSOR_KEY, CALL_RECAP_INSTRUCTIONS, recapPreference, validateCallRecap, renderCallRecap } from "@/lib/call-recap";
+import { CALL_RECAP_KEY, CALL_RECAP_CURSOR_KEY, CALL_RECAP_INSTRUCTIONS, CALL_RECAP_FORMAT, callRecapReviewMessage, recapPreference, validateCallRecap, renderCallRecap } from "@/lib/call-recap";
 
 const receiptQuery = (scope: RecordScope) => supabaseService.from("call_recap_emails").select("*").eq("workspace_id", scope.workspaceId).eq("owner_id", scope.userId);
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const textOf = (r: any) => (r?.content || []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("").trim();
 const uncertainMessage = "Email delivery was not confirmed. Check your inbox and sent mail before contacting support. LiveCoach will not send another copy automatically.";
-const reviewMessage = "The recap needs a privacy or accuracy review. Your transcript and call summary are still saved.";
 
 export async function requireActiveRecapScope(): Promise<RecordScope> {
   const scope = await resolveRecordScope();
@@ -138,18 +137,20 @@ export async function processCallRecapEmail(id: string) {
       return;
     }
     const transcript = String(session.transcript || "").trim();
-    if (transcript.length < 30 || transcript.length > 180000) throw new Error("RECAP_REVIEW_REQUIRED");
+    if (transcript.length < 30 || transcript.length > 180000) throw new Error("RECAP_REVIEW_REQUIRED_LIMITS");
     const sourceHash = hash(transcript);
     let recap = row.source_hash === sourceHash && row.recap?.version === 1 ? row.recap : null;
     if (!recap) {
       const host = await loadHostIdentityForUser(scope.userId, scope.workspaceId);
-      const response = await openai.messages.create({ model: OPENAI_MODEL_LIVE, max_tokens: 2600, temperature: 0,
+      const response = await openai.messages.create({ model: OPENAI_MODEL_LIVE, max_tokens: 3800, temperature: 0,
         system: CALL_RECAP_INSTRUCTIONS,
+        response_format: CALL_RECAP_FORMAT,
         messages: [{ role: "user", content: JSON.stringify({ hostName: host.name, transcript }) }],
       });
-      await logModelUsage("call_recap_email", "live", (response as any).usage, {}, scope);
+      await logModelUsage("call_recap_email", "live", (response as any).usage, { stop_reason: response.stop_reason, receipt_id: id }, scope);
       let parsed: any;
-      try { parsed = JSON.parse(textOf(response)); } catch { throw new Error("RECAP_REVIEW_REQUIRED"); }
+      if (response.stop_reason === "max_tokens") throw new Error("RECAP_REVIEW_REQUIRED_FORMAT");
+      try { parsed = JSON.parse(textOf(response)); } catch { throw new Error("RECAP_REVIEW_REQUIRED_FORMAT"); }
       recap = validateCallRecap(parsed, transcript, host.name || "");
       // Separate, small privacy/grounding check. Only the proposed bullets and
       // exact supporting quotes are sent, never any CRM/coaching context.
@@ -158,7 +159,7 @@ export async function processCallRecapEmail(id: string) {
         messages: [{ role: "user", content: JSON.stringify(recap) }],
       });
       await logModelUsage("call_recap_privacy_review", "live", (review as any).usage, {}, scope);
-      if (textOf(review) !== "APPROVE") throw new Error("RECAP_REVIEW_REQUIRED");
+      if (textOf(review) !== "APPROVE") throw new Error("RECAP_REVIEW_REQUIRED_PRIVACY");
       await update({ status: "ready", recap, source_hash: sourceHash, meeting_at: session.started_at || session.created_at, last_error: null });
     }
     // Recheck live permissions and consent after model work, immediately before
@@ -183,10 +184,11 @@ export async function processCallRecapEmail(id: string) {
     if (!sent.ok) throw new Error("RECAP_DELIVERY_UNCONFIRMED");
     await update({ status: "sent", provider_message_id: sent.id || null, sent_at: new Date().toISOString(), lease_until: null, last_error: null });
   } catch (error: any) {
-    const review = error?.message === "RECAP_REVIEW_REQUIRED" || row.attempts >= 2;
+    const code = String(error?.message || "");
+    const review = code.startsWith("RECAP_REVIEW_REQUIRED") || row.attempts >= 2;
     await update({ status: sendClaimed ? "uncertain" : review ? "needs_review" : "queued",
       lease_until: sendClaimed || review ? null : new Date(Date.now() + 300000).toISOString(),
-      last_error: sendClaimed ? uncertainMessage : review ? reviewMessage : "Your call is saved. The recap email is waiting for preparation or a connected mailbox. LiveCoach will check again automatically.",
+      last_error: sendClaimed ? uncertainMessage : review ? callRecapReviewMessage(code) : "Your call is saved. The recap email is waiting for preparation or a connected mailbox. LiveCoach will check again automatically.",
     });
   }
 }
