@@ -127,6 +127,10 @@ assert.equal(
   false,
   "Another person's unassigned opportunity is never treated as mine"
 );
+assert.equal(opportunityMatchesOwner({ owner_id: lee, assigned_to_user_id: jimmy }, "mine", lee), false);
+assert.equal(opportunityMatchesOwner({ owner_id: lee, assigned_to_user_id: jimmy }, "mine", jimmy), true);
+assert.equal(opportunityMatchesOwner({ owner_id: lee, assigned_to_user_id: lee }, "mine", jimmy), false);
+assert.equal(opportunityMatchesOwner({ owner_id: lee, assigned_to_user_id: lee }, "all", jimmy), true);
 assert.equal(opportunityMatchesOwner({ assigned_to_user_id: null }, "unassigned", lee), true);
 
 const accessHelper = read("lib/opportunity-access.ts");
