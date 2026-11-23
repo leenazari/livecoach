@@ -4,21 +4,21 @@
 
 :root {
   color-scheme: dark;
-  --lc-ink: 15 18 23;
-  --lc-panel: 23 27 34;
-  --lc-panel2: 28 33 42;
-  --lc-edge: 42 47 58;
-  --lc-bone: 233 229 219;
-  --lc-muted: 138 144 157;
-  --lc-amber: 224 164 88;
-  --lc-amberglow: 245 201 122;
+  --lc-ink: 13 23 40;
+  --lc-panel: 21 34 54;
+  --lc-panel2: 29 46 69;
+  --lc-edge: 55 72 94;
+  --lc-bone: 241 245 249;
+  --lc-muted: 165 180 200;
+  --lc-amber: 94 234 212;
+  --lc-amberglow: 153 246 228;
   --lc-sage: 139 184 154;
   --lc-moss: 111 173 130;
   --lc-rust: 201 122 92;
   --lc-sky: 127 168 208;
-  --lc-body: 14 13 11;
-  --lc-scrollbar: 42 38 29;
-  --lc-scrollbar-hover: 58 52 42;
+  --lc-body: 13 23 40;
+  --lc-scrollbar: 55 72 94;
+  --lc-scrollbar-hover: 79 98 121;
   --color-background-info: rgb(127 168 208 / 0.14);
   --color-text-info: rgb(127 168 208);
   --color-background-warning: rgb(224 164 88 / 0.14);
@@ -27,21 +27,21 @@
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --lc-ink: 247 244 237;
+  --lc-ink: 236 241 247;
   --lc-panel: 255 255 255;
-  --lc-panel2: 239 235 226;
-  --lc-edge: 211 204 190;
-  --lc-bone: 34 31 26;
-  --lc-muted: 101 96 87;
-  --lc-amber: 151 87 8;
-  --lc-amberglow: 122 68 3;
+  --lc-panel2: 227 234 242;
+  --lc-edge: 194 205 219;
+  --lc-bone: 17 34 58;
+  --lc-muted: 70 89 114;
+  --lc-amber: 0 108 98;
+  --lc-amberglow: 0 88 80;
   --lc-sage: 48 105 75;
   --lc-moss: 42 111 68;
   --lc-rust: 156 63 43;
   --lc-sky: 48 98 146;
-  --lc-body: 247 244 237;
-  --lc-scrollbar: 198 188 171;
-  --lc-scrollbar-hover: 168 156 137;
+  --lc-body: 236 241 247;
+  --lc-scrollbar: 178 192 210;
+  --lc-scrollbar-hover: 143 162 185;
   --color-background-info: rgb(48 98 146 / 0.12);
   --color-text-info: rgb(36 80 122);
   --color-background-warning: rgb(151 87 8 / 0.12);
@@ -58,28 +58,21 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Warm paper-grain atmosphere behind everything */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background:
-    radial-gradient(900px 600px at 78% -10%, rgba(224, 163, 74, 0.10), transparent 60%),
-    radial-gradient(700px 500px at -5% 110%, rgba(126, 155, 120, 0.07), transparent 55%);
-}
-
-:root[data-theme="light"] body::before {
-  background:
-    radial-gradient(900px 600px at 78% -10%, rgba(194, 121, 24, 0.10), transparent 60%),
-    radial-gradient(700px 500px at -5% 110%, rgba(76, 128, 91, 0.08), transparent 55%);
-}
-
-html,
-body,
-body::before {
-  transition: background-color 180ms ease, color 180ms ease;
+/* Keep navigation navy in either appearance. Descendants use the same tokens. */
+.lc-navy-nav {
+  --lc-ink: 13 23 40;
+  --lc-panel: 17 30 50;
+  --lc-panel2: 29 46 69;
+  --lc-edge: 55 72 94;
+  --lc-bone: 241 245 249;
+  --lc-muted: 165 180 200;
+  --lc-amber: 94 234 212;
+  --lc-amberglow: 153 246 228;
+  --lc-sage: 139 194 162;
+  --lc-rust: 239 146 130;
+  --lc-sky: 147 197 253;
+  color: rgb(var(--lc-bone));
+  color-scheme: dark;
 }
 
 /* Subtle scrollbars */
@@ -121,9 +114,9 @@ body::before {
 .thinking {
   background: linear-gradient(
     90deg,
-    rgba(224, 163, 74, 0.25) 0%,
-    rgba(245, 201, 122, 0.8) 50%,
-    rgba(224, 163, 74, 0.25) 100%
+    rgb(var(--lc-amber) / 0.25) 0%,
+    rgb(var(--lc-amberglow) / 0.8) 50%,
+    rgb(var(--lc-amber) / 0.25) 100%
   );
   background-size: 200% 100%;
   -webkit-background-clip: text;
