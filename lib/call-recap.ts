@@ -39,6 +39,29 @@ export const CALL_RECAP_FORMAT = {
     },
   },
 };
+export const CALL_RECAP_REVIEW_FORMAT = {
+  type: "json_schema", name: "shareable_call_recap_review", strict: true,
+  schema: { type: "object", additionalProperties: false, required: ["points", "decisions", "actions"],
+    properties: {
+      points: { type: "array", items: { type: "integer" } },
+      decisions: { type: "array", items: { type: "integer" } },
+      actions: { type: "array", items: { type: "integer" } },
+    },
+  },
+};
+
+export function selectReviewedCallRecap(recap: CallRecap, review: any): CallRecap {
+  const select = <T,>(items: T[], indices: unknown): T[] => {
+    if (!Array.isArray(indices) || new Set(indices).size !== indices.length ||
+        indices.some(i => !Number.isInteger(i) || i < 0 || i >= items.length)) reviewRequired("PRIVACY");
+    // Preserve original order. Review can only approve or omit existing text,
+    // never rewrite it or introduce a new commitment or person.
+    return items.filter((_, index) => (indices as number[]).includes(index));
+  };
+  const result = { ...recap, points: select(recap.points, review?.points), decisions: select(recap.decisions, review?.decisions), actions: select(recap.actions, review?.actions) };
+  if (!result.points.length && !result.decisions.length && !result.actions.length) reviewRequired("PRIVACY");
+  return result;
+}
 
 export function callRecapReviewMessage(code: string) {
   const reasons: Record<string, string> = {

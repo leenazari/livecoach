@@ -46,6 +46,11 @@ assert.ok(content.callRecapPassages(`${transcript}\nYou: Off the record, this is
 const longRecap = content.validateReferencedCallRecap({ shareable: true, points: [], decisions: [], actions: [{ task: "Send the requirements", owner: "Jane Lewis", due: "Friday", evidenceId: longPassages.at(-1).id }] }, longSource, "Lee");
 assert.equal(longRecap.actions[0].evidenceSpeaker, "Jane Lewis", "Split utterance retains server-verified speaker provenance");
 assert.equal(recap.actions[1].owner, "Lee");
+const reviewed = content.selectReviewedCallRecap(recap, { points: [0], decisions: [], actions: [1] });
+assert.equal(reviewed.points.length, 1); assert.equal(reviewed.decisions.length, 0);
+assert.equal(reviewed.actions[0].owner, "Lee");
+assert.throws(() => content.selectReviewedCallRecap(recap, { points: [99], decisions: [], actions: [] }), /RECAP_REVIEW_REQUIRED_PRIVACY/);
+assert.throws(() => content.selectReviewedCallRecap(recap, { points: [], decisions: [], actions: [] }), /RECAP_REVIEW_REQUIRED_PRIVACY/);
 const email = content.renderCallRecap(recap, "2026-11-23T15:15:00Z");
 assert.match(email.text, /Next actions/);
 assert.match(email.subject, /Meeting recap with Jane/);
@@ -126,7 +131,7 @@ const deps = {
   "@/lib/openai": { OPENAI_MODEL_LIVE: "test-model", openai: { messages: { create: async p => {
     modelCalls++; assert.doesNotMatch(JSON.stringify(p), /PRIVATE_PREP|PRIVATE_NEGOTIATION_LIMIT/);
     if (gate) await gate;
-    const review = p.max_tokens === 100;
+    const review = p.response_format?.name === "shareable_call_recap_review";
     if (!review) {
       assert.equal(p.response_format.name, "shareable_call_recap");
       assert.equal(p.response_format.strict, true);
@@ -137,7 +142,9 @@ const deps = {
       assert.ok(input.passages.every(part => transcript.includes(part.text)), "Evidence passages are literal canonical source text");
       assert.equal(input.transcript, undefined, "Source text is passed once, as bounded references");
     }
-    return { content: [{ type: "text", text: review ? hold ? "HOLD" : "APPROVE" : JSON.stringify(referenced) }], usage: {} };
+    const reviewedRecap = review ? JSON.parse(p.messages[0].content).recap : null;
+    const verdict = review ? Object.fromEntries(["points", "decisions", "actions"].map(section => [section, hold ? [] : reviewedRecap[section].map((_, index) => index)])) : null;
+    return { content: [{ type: "text", text: JSON.stringify(review ? verdict : referenced) }], usage: {} };
   } } } },
   "@/lib/usage": { logModelUsage: async () => {} }, "@/lib/call-recap": content,
 };
