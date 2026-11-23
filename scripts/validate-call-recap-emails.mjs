@@ -40,11 +40,15 @@ assert.throws(() => content.validateCallRecap({ ...proposed, shareable: false },
 assert.equal(content.recapPreference("not json").enabled, false);
 assert.equal(content.recapPreference('{"enabled":true}').enabled, false);
 assert.match(content.CALL_RECAP_INSTRUCTIONS, /untrusted evidence/);
+assert.equal(content.CALL_RECAP_FORMAT.strict, true);
+assert.throws(() => content.validateCallRecap({ ...proposed, points: [{ text: "A safe point", evidence: "A quote from some other call entirely" }] }, transcript, "Lee"), /RECAP_REVIEW_REQUIRED_EVIDENCE/);
+assert.match(content.callRecapReviewMessage("RECAP_REVIEW_REQUIRED_EVIDENCE"), /quote could not be matched exactly/);
+assert.doesNotMatch(content.callRecapReviewMessage("DATABASE_PRIVATE_SECRET"), /DATABASE_PRIVATE_SECRET/);
 
 const workspace = "00000000-0000-4000-8000-000000000001", lee = "00000000-0000-4000-8000-000000000002", cam = "00000000-0000-4000-8000-000000000003";
 const callId = "00000000-0000-4000-8000-000000000004";
 let scope = { userId: lee, workspaceId: workspace };
-let rows, sent, modelCalls, gate, hold, sendFailure, failSentSave, failRead, providerHook;
+let rows, sent, modelCalls, gate, hold, sendFailure, failSentSave, failRead, providerHook, modelResponse;
 const enabledSince = "2026-11-23T14:00:00.000Z";
 function reset() {
   scope = { userId: lee, workspaceId: workspace };
@@ -55,7 +59,7 @@ function reset() {
     interview_sessions: [{ session_id: "s1", workspace_id: workspace, owner_id: lee, transcript, started_at: "2026-11-23T15:15:00Z", ended_at: "2026-11-23T16:15:00Z", created_at: "2026-11-23T15:00:00Z", brief: "PRIVATE_PREP" }],
     call_recap_emails: [{ id: "receipt", call_id: callId, session_id: "s1", workspace_id: workspace, owner_id: lee, status: "queued", attempts: 0, lease_until: null, created_at: "2026-11-23T16:16:00Z" }],
   };
-  sent = []; modelCalls = 0; gate = null; hold = false; sendFailure = false; failSentSave = false; failRead = null; providerHook = null;
+  sent = []; modelCalls = 0; gate = null; hold = false; sendFailure = false; failSentSave = false; failRead = null; providerHook = null; modelResponse = null;
 }
 const db = { from(table) {
   let filters = [], orders = [], limit = Infinity, action = "read", payload, single = false;
@@ -104,6 +108,11 @@ const deps = {
     modelCalls++; assert.doesNotMatch(JSON.stringify(p), /PRIVATE_PREP|PRIVATE_NEGOTIATION_LIMIT/);
     if (gate) await gate;
     const review = p.max_tokens === 100;
+    if (!review) {
+      assert.equal(p.response_format.name, "shareable_call_recap");
+      assert.equal(p.response_format.strict, true);
+      if (modelResponse) return modelResponse;
+    }
     return { content: [{ type: "text", text: review ? hold ? "HOLD" : "APPROVE" : JSON.stringify(proposed) }], usage: {} };
   } } } },
   "@/lib/usage": { logModelUsage: async () => {} }, "@/lib/call-recap": content,
@@ -130,6 +139,13 @@ reset(); rows.app_config[0].visibility = "team";
 assert.equal((await worker.getCallRecapPreference()).enabled, false, "Never inherit team opt-in");
 reset(); hold = true;
 await worker.processCallRecapEmail("receipt"); assert.equal(sent.length, 0); assert.equal(rows.call_recap_emails[0].status, "needs_review");
+assert.match(rows.call_recap_emails[0].last_error, /privacy check could not approve/);
+reset(); modelResponse = { content: [{ type: "text", text: "{truncated" }], stop_reason: "max_tokens" };
+await worker.processCallRecapEmail("receipt"); assert.equal(sent.length, 0); assert.equal(modelCalls, 1);
+assert.match(rows.call_recap_emails[0].last_error, /not returned in a complete readable format/);
+reset(); modelResponse = { content: [{ type: "text", text: JSON.stringify({ ...proposed, actions: [{ ...proposed.actions[0], due: "Wednesday" }] }) }] };
+await worker.processCallRecapEmail("receipt"); assert.equal(sent.length, 0); assert.equal(modelCalls, 1);
+assert.match(rows.call_recap_emails[0].last_error, /action owner, date or supporting quote/);
 reset(); sendFailure = true;
 await worker.processCallRecapEmail("receipt"); await worker.processCallRecapEmail("receipt");
 assert.equal(sent.length, 1); assert.equal(rows.call_recap_emails[0].status, "uncertain");
