@@ -103,6 +103,7 @@ const route = compile('app/api/crm/new-leads/route.ts', {
   'next/server': { NextResponse: { json: (data, options) => ({ data, ...options }) } },
   '@/lib/crm-blocker': { crmBlockerPayload: value => ({ error: value.title, blocker: value }) },
   '@/lib/assigned-new-leads': projection, '@/lib/assigned-new-leads-server': loader,
+  '@/lib/recorded-company-emails-server': { loadRecordedCompanyEmails: async ids => { assert.ok(ids.length <= 25); return { messages: [], limited: false }; } },
 });
 const req = query => ({ nextUrl: new URL(`https://crm.test/api/crm/new-leads?${query}`) });
 assert.equal((await route.GET(req('page=-1'))).status, 400);

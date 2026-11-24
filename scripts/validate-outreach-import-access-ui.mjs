@@ -135,6 +135,13 @@ assert.match(document.querySelector('[role="alert"]').textContent, /Access check
 failAccess = false;
 await act(async () => button("Retry upload access").click());
 assert.equal(button("Import CSV").disabled, false);
+dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+await act(async () => {
+  window.history.replaceState({}, '', '/crm/outreach?tab=prospects#import-leads');
+  window.dispatchEvent(new dom.window.HashChangeEvent('hashchange'));
+});
+assert.ok(button('Close importer'), 'Upload shortcut must open the existing importer');
+assert.ok(document.querySelector('textarea'), 'The file/paste controls should be immediately available');
 await act(async () => root.unmount());
 dom.window.close();
 

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   closestCorners,
@@ -27,6 +27,7 @@ import {
 } from "@/lib/opportunity-fields";
 import { crmFetch } from "@/lib/crm";
 import { opportunityMatchesOwner } from "@/lib/opportunity-owner-filter";
+import { matchesPipelineSearch } from "@/lib/pipeline-search";
 import {
   hasRecordedRevenueAmount,
   isQualifiedPipelineStage,
@@ -537,6 +538,20 @@ export default function PipelineWorkspace(props: Props) {
         : "Another team member"
       : "Unassigned";
   const [view, setView] = useState<"table" | "kanban">("table");
+  const [search, setSearch] = useState("");
+  const deferredSearch = useDeferredValue(search);
+  useEffect(() => {
+    const restore = () => setSearch((new URLSearchParams(window.location.search).get('pipeline_search') || '').slice(0, 160));
+    restore(); window.addEventListener('popstate', restore);
+    return () => window.removeEventListener('popstate', restore);
+  }, []);
+  const changeSearch = (value: string) => {
+    setSearch(value);
+    const url = new URL(window.location.href);
+    if (value.trim()) url.searchParams.set('pipeline_search', value);
+    else url.searchParams.delete('pipeline_search');
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+  };
   const [tableOrder, setTableOrder] = useState<
     "priority" | "newest" | "oldest" | "activity_newest" | "activity_oldest"
   >("priority");
@@ -580,8 +595,8 @@ export default function PipelineWorkspace(props: Props) {
     [currentUser, effectiveOwnerFilter, rows]
   );
   const visibleRows = useMemo(
-    () => ownerVisibleRows.filter((row) => matchesPipelineFocus(row, activeFocus)),
-    [activeFocus, ownerVisibleRows]
+    () => ownerVisibleRows.filter((row) => matchesPipelineFocus(row, activeFocus) && matchesPipelineSearch(row, deferredSearch)),
+    [activeFocus, ownerVisibleRows, deferredSearch]
   );
   const tableRows = useMemo(() => {
     if (tableOrder === "priority") return visibleRows;
@@ -749,6 +764,12 @@ export default function PipelineWorkspace(props: Props) {
         </div>
       </div>
 
+      <div className="mt-4 flex flex-wrap items-end gap-3" role="search" aria-label="Search pipeline">
+        <label className="grid min-w-0 flex-1 gap-1 text-xs text-muted">Find a deal
+          <input type="search" aria-label="Search deals" value={search} maxLength={160} onChange={event => changeSearch(event.target.value)} placeholder="Company, deal or next action…" className="min-h-11 w-full rounded-lg border border-edge bg-ink px-3 text-sm text-bone outline-none focus:border-amber" />
+        </label>
+        {search && <button type="button" onClick={() => changeSearch("")} className="min-h-11 rounded-lg border border-edge px-3 text-sm text-amber">Clear search</button>}
+      </div>
       <div className="mt-4" aria-label="Open pipeline by stage">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-semibold text-bone">Deals and value by stage</h3>
@@ -761,7 +782,7 @@ export default function PipelineWorkspace(props: Props) {
             <span className="mt-1 block text-sm text-amber">{gbp(stage.value)}</span>
           </button>)}
         </div>
-        <p className="mt-2 text-xs text-muted">Saved open opportunities for {ownerViewLabel}. Totals include recorded values; won and lost deals are excluded.</p>
+        <p className="mt-2 text-xs text-muted">Saved open opportunities for {ownerViewLabel}. Totals include recorded values; won and lost deals are excluded.{search ? ' Stage totals show all your accessible deals, not just search matches.' : ''}</p>
       </div>
 
       <p className="mt-3 font-mono text-[0.52rem] uppercase tracking-wider text-muted">
@@ -871,8 +892,8 @@ export default function PipelineWorkspace(props: Props) {
         </DndContext>
       )}
       {!visibleRows.length ? (
-        <p className="mt-3 rounded-lg border border-dashed border-edge p-5 text-center text-sm text-muted">
-          {canManageAssignments
+        <p role="status" className="mt-3 rounded-lg border border-dashed border-edge p-5 text-center text-sm text-muted">
+          {search ? 'No deals match this search and your current filters. Clear the search or choose another stage.' : canManageAssignments
             ? "No deals match this owner view. Choose All team work to see the shared pipeline."
             : "No opportunities match this view. Choose Show all stages or use New opportunity above to add your first deal."}
         </p>

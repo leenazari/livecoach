@@ -3,9 +3,9 @@ import { getAccessToken, googleConnected } from "@/lib/google";
 // Read-only Gmail access for the app, using the SAME Google OAuth token as the
 // calendar (lib/google.ts). Lets the brain pull the mail thread with a contact
 // and build a client from it. Metadata + snippet only - never the full HTML
-// body - so context stays clean and small. Best-effort: every call returns an
-// empty result rather than throwing, and an empty result when a query should
-// match usually means Gmail scope was not granted (reconnect Google in Settings).
+// body - so context stays clean and small. Best-effort by default. On-demand
+// history opts into strict reads so a provider failure cannot look like an empty
+// history. Legacy callers retain their existing empty-result contract.
 
 const GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me";
 
@@ -62,13 +62,16 @@ async function gmailFetch(
   }
 }
 
-async function api(path: string, token: string, ownerId?: string): Promise<any | null> {
+async function api(path: string, token: string, ownerId?: string, options?: { strict?: boolean; signal?: AbortSignal }): Promise<any | null> {
   try {
-    const res = await gmailFetch(path, token, {}, ownerId);
-    if (!res) return null;
-    if (!res.ok) return null;
+    const res = await gmailFetch(path, token, { signal: options?.signal }, ownerId);
+    if (!res?.ok) {
+      if (options?.strict) throw new Error('mailbox_search_unavailable');
+      return null;
+    }
     return await res.json();
   } catch {
+    if (options?.strict) throw new Error('mailbox_search_unavailable');
     return null;
   }
 }
@@ -153,18 +156,24 @@ export async function gmailAccessStatus(ownerId?: string): Promise<"ok" | "missi
 export async function recentMessages(
   query: string,
   max = 12,
-  ownerId?: string
+  ownerId?: string,
+  options?: { strict?: boolean; signal?: AbortSignal }
 ): Promise<GmailMsg[]> {
   const token = await getAccessToken(false, ownerId);
-  if (!token) return [];
+  if (!token) {
+    if (options?.strict) throw new Error('mailbox_search_unavailable');
+    return [];
+  }
   const list = await api(
     `/messages?q=${encodeURIComponent(query)}&maxResults=${Math.min(
       Math.max(max, 1),
       25
     )}`,
     token,
-    ownerId
+    ownerId,
+    options
   );
+  if (options?.strict && (!list || (!Array.isArray(list.messages) && list.resultSizeEstimate !== 0))) throw new Error('mailbox_search_unavailable');
   const ids: string[] = Array.isArray(list?.messages)
     ? list.messages.map((m: any) => m?.id).filter(Boolean)
     : [];
@@ -174,9 +183,11 @@ export async function recentMessages(
     const m = await api(
       `/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Subject&metadataHeaders=Date`,
       token,
-      ownerId
+      ownerId,
+      options
     );
     if (!m) return null;
+    if (options?.strict && (!m.id || !Array.isArray(m.payload?.headers))) throw new Error('mailbox_search_unavailable');
     const headers = m.payload?.headers || [];
     const dateMs = m.internalDate
       ? Number(m.internalDate)

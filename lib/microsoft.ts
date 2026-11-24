@@ -677,7 +677,8 @@ const messageSelect =
 export async function recentMicrosoftMessages(
   query: string,
   max = 12,
-  ownerId?: string
+  ownerId?: string,
+  options?: { strict?: boolean; signal?: AbortSignal; exactContactEmail?: string }
 ): Promise<GmailMsg[]> {
   const sentOnly = /\bin:sent\b/i.test(query);
   const path = sentOnly ? "/me/mailFolders/sentitems/messages" : "/me/messages";
@@ -686,9 +687,23 @@ export async function recentMicrosoftMessages(
     $orderby: sentOnly ? "sentDateTime desc" : "receivedDateTime desc",
     $select: messageSelect,
   });
-  const response = await graphFetch(`${path}?${params.toString()}`, {}, ownerId);
-  if (!response?.ok) return [];
+  if (options?.exactContactEmail) {
+    const email = options.exactContactEmail.trim().toLowerCase();
+    if (!/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(email)) throw new Error('mailbox_contact_missing');
+    // Opt-in contact lookup searches the mailbox rather than filtering only its
+    // newest unrelated messages. Graph message search orders results by sent
+    // time and does not support adding $orderby. The caller rechecks addresses.
+    params.set('$search', `"from:${email} OR to:${email}"`);
+    params.delete('$orderby');
+    params.set('$select', `${messageSelect},isDraft`);
+  }
+  const response = await graphFetch(`${path}?${params.toString()}`, { signal: options?.signal }, ownerId);
+  if (!response?.ok) {
+    if (options?.strict) throw new Error('mailbox_search_unavailable');
+    return [];
+  }
   const data = await response.json();
+  if (options?.strict && !Array.isArray(data.value)) throw new Error('mailbox_search_unavailable');
   const fromEmails = [...query.matchAll(/\bfrom:([^\s)]+)/gi)].map((match) => match[1].toLowerCase());
   const toEmails = [...query.matchAll(/\bto:([^\s)]+)/gi)].map((match) => match[1].toLowerCase());
   const newerDays = Number(query.match(/\bnewer_than:(\d+)d\b/i)?.[1] || 0);
@@ -698,6 +713,7 @@ export async function recentMicrosoftMessages(
   const combinesAddressesWithOr =
     /\bOR\b/i.test(query) && (fromEmails.length > 0 || toEmails.length > 0);
   return (Array.isArray(data.value) ? data.value : [])
+    .filter((message: any) => !options?.exactContactEmail || message.isDraft === false)
     .map(graphMessage)
     .filter((message: GmailMsg | null): message is GmailMsg => !!message)
     .filter((message: GmailMsg) => {
