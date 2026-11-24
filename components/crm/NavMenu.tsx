@@ -123,11 +123,14 @@ function NavMenuInner({
   const [mobileMore, setMobileMore] = useState(false);
   const [desktopMore, setDesktopMore] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
-  const [viewerRole, setViewerRole] = useState<ViewerRole | null>(() => {
-    const cached = getCached<TeamStatus>(TEAM_STATUS_URL);
-    return cached?.role || null;
-  });
-  const [callsFirst, setCallsFirst] = useState(false);
+  // The CRM pages remount this menu. Seed the entire layout from the
+  // same cached status so tabs keep their positions during revalidation.
+  const [teamStatus, setTeamStatus] = useState<TeamStatus | undefined>(() =>
+    getCached<TeamStatus>(TEAM_STATUS_URL)
+  );
+  const viewerRole = teamStatus?.role ?? null;
+  const department = teamStatus?.department || "sales";
+  const callsFirst = teamStatus?.callsFirst === true;
   const [inboundNavigation, setInboundNavigation] = useState(false);
   useEffect(() => {
     let active = true;
@@ -136,13 +139,12 @@ function NavMenuInner({
       .catch(() => { if (active) setInboundNavigation(false); });
     return () => { active = false; };
   }, []);
-  const [department, setDepartment] = useState(() => getCached<TeamStatus>(TEAM_STATUS_URL)?.department || 'sales');
 
   useEffect(() => {
     let active = true;
     void crmFetch<TeamStatus>(TEAM_STATUS_URL)
       .then((status) => {
-        if (active && status.role) { setViewerRole(status.role); setDepartment(status.department || 'sales'); setCallsFirst(status.callsFirst === true); }
+        if (active && status.role) setTeamStatus(status);
       })
       .catch(() => {
         // Navigation still works with the safe salesperson home fallback.
@@ -405,7 +407,7 @@ function NavMenuInner({
         type="button"
         onClick={() => setMinimised(false)}
         title="Open menu"
-        className="fixed left-4 top-4 z-50 flex h-11 w-11 items-center justify-center rounded-full border border-edge bg-panel text-bone shadow-lg transition hover:border-amber/60 hover:text-amber"
+        className="fixed left-4 top-4 z-50 hidden h-11 w-11 items-center justify-center rounded-full border border-edge bg-panel text-bone shadow-lg transition hover:border-amber/60 hover:text-amber sm:flex"
       >
         <span className="text-lg leading-none">☰</span>
         {notificationCount > 0 ? (
@@ -418,7 +420,7 @@ function NavMenuInner({
   }
 
   return (
-    <aside className="lc-navy-nav fixed left-0 top-0 z-50 flex h-full w-60 flex-col border-r border-edge bg-panel">
+    <aside className="lc-navy-nav fixed left-0 top-0 z-50 hidden h-full w-60 flex-col border-r border-edge bg-panel sm:flex">
       <div className="flex items-center justify-between px-5 py-4">
         <LiveCoachLogo markClassName="h-8 w-8" wordmarkClassName="font-display text-[1.15rem] tracking-tight" />
         <button
