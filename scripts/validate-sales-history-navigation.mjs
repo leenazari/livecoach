@@ -254,8 +254,9 @@ const fetch = async (url, init) => {
 };
 const Email = load('components/crm/CompanyEmailHistory.tsx', { '@/lib/crm': { crmFetch: fetch }, '@/lib/recorded-company-emails': emailProjection }).default;
 const link = { default: ({ children, ...props }) => React.createElement('a', props, children) };
+const details = load('components/crm/AssignedLeadDetails.tsx', { 'next/link': link, '@/lib/crm': { crmFetch: fetch, clearCrmCache() {} } });
 const UI = load('components/crm/AssignedNewLeads.tsx', {
-  'next/link': link, '@/components/crm/NavMenu': { default: () => null }, '@/components/crm/SalesJourneySwitch': { default: () => null },
+  'next/link': link, 'next/dynamic': { default: () => () => null }, '@/components/crm/AssignedLeadDetails': details, '@/components/crm/NavMenu': { default: () => null }, '@/components/crm/SalesJourneySwitch': { default: () => null },
   '@/components/crm/CompanyEmailHistory': { default: Email }, '@/lib/lead-list-navigation': navigation,
   '@/lib/crm': { crmFetch: fetch, clearCrmCache() {} }, '@/lib/assigned-new-leads': projection, '@/lib/sales-lead-events': load('lib/sales-lead-events.ts'),
 }).default;
@@ -270,6 +271,7 @@ assert.doesNotMatch(document.body.textContent, /Email history recorded|No tracke
 assert.equal(document.querySelector('a[href*="import-leads"]').getAttribute('href'), '/crm/outreach?tab=prospects#import-leads');
 assert.equal(document.querySelector('a[href*="import-leads"]').textContent, 'Upload to Outreach', 'Make the existing importer destination explicit');
 snapshot('leads');
+await act(async () => root.render(React.createElement(Email, { companyId: COMPANY })));
 await act(async () => button('Read email history').click());
 assert.match(document.body.textContent, /Friday works for us/); assert.match(document.body.textContent, /Other people’s mailboxes/);
 assert.equal(document.querySelectorAll('script').length, 0, 'Saved text must not become HTML');
@@ -286,6 +288,7 @@ await act(async () => button('Check my connected mailbox').click());
 assert.equal(requests.filter(url => url.includes('source=mailbox')).length, 1);
 assert.match(document.body.textContent, /My current correspondence/);
 await act(async () => button('Show saved CRM emails').click());
+await act(async () => root.render(React.createElement(UI, { onOpenInbound() {} })));
 await act(async () => { window.history.pushState({}, '', '/crm/new-leads?lead_query=Restored&lead_page=2'); window.dispatchEvent(new dom.window.PopStateEvent('popstate')); });
 assert.equal(document.querySelector('[aria-label="Search leads"]').value, 'Restored'); assert.match(window.location.search, /lead_page=2/);
 await act(async () => root.unmount());

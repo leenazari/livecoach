@@ -17,6 +17,7 @@ import { requireRequestScope } from "@/lib/request-scope";
 import { loadSafeSharedCompany } from "@/lib/team-client-sharing";
 
 import { loadTeamLeadCoverCompany } from "@/lib/team-lead-cover";
+import { saveManualClientNote } from "@/lib/manual-client-note";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -56,6 +57,7 @@ export async function POST(
   try {
     const scope = requireRequestScope();
     const body = await req.json();
+    if (body.analyse === false) return saveManualClientNote(params.id, body);
     const autoApply = body.autoApply === true;
     const completeTaskId =
       typeof body.completeTaskId === "string" && UUID.test(body.completeTaskId)

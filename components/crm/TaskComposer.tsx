@@ -58,6 +58,7 @@ export default function TaskComposer({
   triggerLabel = "Log a task",
   onSaved,
   onCancel,
+  onFormStateChange,
 }: {
   fixedCompany?: TaskComposerCompany | null;
   prospect?: TaskComposerProspect | null;
@@ -66,6 +67,7 @@ export default function TaskComposer({
   triggerLabel?: string;
   onSaved?: (result: TaskComposerResult) => void | Promise<void>;
   onCancel?: () => void;
+  onFormStateChange?: (state: { dirty: boolean; busy: boolean; listening: boolean }) => void;
 }) {
   const [open, setOpen] = useState(initiallyOpen);
   const [text, setText] = useState(defaultText);
@@ -91,6 +93,10 @@ export default function TaskComposer({
   const minimumDate = useMemo(() => localDateInputValue(), []);
 
   useEffect(() => {
+    onFormStateChange?.({ dirty: Boolean(text.trim() || dueDate || dueTime || pinned), busy: saving, listening });
+  }, [text, dueDate, dueTime, pinned, saving, listening, onFormStateChange]);
+
+  useEffect(() => {
     textRef.current = text;
     if (listening && textAreaRef.current) {
       textAreaRef.current.scrollTop = textAreaRef.current.scrollHeight;
@@ -99,8 +105,16 @@ export default function TaskComposer({
 
   useEffect(
     () => () => {
+      keepListeningRef.current = false;
+      const recognition = recognitionRef.current;
+      recognitionRef.current = null;
       try {
-        recognitionRef.current?.stop();
+        if (recognition) {
+          recognition.onresult = null;
+          recognition.onend = null;
+          recognition.onerror = null;
+          recognition.stop();
+        }
       } catch {
         // Recognition may already have ended.
       }
@@ -140,6 +154,7 @@ export default function TaskComposer({
     let committed = "";
 
     recognition.onresult = (event: any) => {
+      if (recognitionRef.current !== recognition) return;
       const folded = foldDictationEvent(committed, event.results);
       committed = folded.committed;
       let hasNewFinal = false;
@@ -265,6 +280,7 @@ export default function TaskComposer({
     }
 
     if (!requestIdRef.current) requestIdRef.current = crypto.randomUUID();
+    stopVoice();
     setSaving(true);
     setError("");
     setNotice("");
@@ -336,6 +352,7 @@ export default function TaskComposer({
       onSubmit={save}
       className="min-w-0 w-full mb-3 rounded-xl border border-amber/45 bg-amber/[0.055] p-3.5"
     >
+      <fieldset disabled={saving} className="min-w-0">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <p className="font-mono text-[0.55rem] uppercase tracking-wider text-amber">
@@ -524,6 +541,7 @@ export default function TaskComposer({
           {error}
         </p>
       ) : null}
+      </fieldset>
     </form>
   );
 }
