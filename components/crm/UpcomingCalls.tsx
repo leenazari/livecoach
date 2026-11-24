@@ -753,7 +753,7 @@ export default function UpcomingCalls({
             return (
             <li
               key={c.id}
-              className="rounded-lg border border-edge bg-ink/40 px-3.5 py-3"
+              className="rounded-lg border border-edge bg-panel px-3.5 py-3"
             >
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                 <button
@@ -791,7 +791,7 @@ export default function UpcomingCalls({
                       ? "Prepped and ready. Tap to review the prep again."
                       : "Review past call summaries and get a fresh, suggested intent for this call before you go in."
                   }
-                  className={`rounded-full border px-3 py-1 font-mono text-[0.54rem] uppercase tracking-wider transition ${
+                  className={`lc-golden-action rounded-full border px-3 py-1 font-mono text-[0.54rem] uppercase tracking-wider transition ${
                     c.prepped
                       ? "border-amber bg-amber text-ink hover:bg-amber/90"
                       : "border-amber/60 bg-amber/15 text-amber hover:bg-amber/25"
@@ -804,7 +804,7 @@ export default function UpcomingCalls({
                   type="button"
                   onClick={() => launchCall(c)}
                   title="Open the meeting and LiveCoach. Reuse the scheduled notetaker if it is already reserved."
-                  className="rounded-full border border-sage/60 bg-sage/15 px-3 py-1 font-mono text-[0.54rem] uppercase tracking-wider text-sage transition hover:bg-sage/25"
+                  className="lc-start-call rounded-full border border-sage/60 bg-sage/15 px-3 py-1 font-mono text-[0.54rem] uppercase tracking-wider text-sage transition hover:bg-sage/25"
                 >
                   start call ▸
                 </button>

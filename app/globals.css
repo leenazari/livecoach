@@ -48,6 +48,24 @@
   --color-text-warning: rgb(122 68 3);
 }
 
+/* Solid fills have their own foregrounds so text accents stay readable. */
+:root[data-theme="light"] .lc-golden-action {
+  background-color: #f2a424;
+  border-color: #f2a424;
+  color: #172132;
+}
+
+:root[data-theme="light"] .lc-start-call {
+  background-color: #08786d;
+  border-color: #08786d;
+  color: #fff;
+}
+
+:root[data-theme="light"] .lc-golden-action:hover,
+:root[data-theme="light"] .lc-start-call:hover {
+  filter: brightness(0.92);
+}
+
 html,
 body {
   padding: 0;
