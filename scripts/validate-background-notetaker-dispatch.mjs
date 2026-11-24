@@ -24,16 +24,19 @@ const eventA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const eventB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 let scope = { workspaceId: ws, userId: alice };
 let browser = false;
+let occurrenceResolver = async () => null;
 const scheduledAt = new Date(Date.now() + 86400000).toISOString();
 const rows = {
   workspace_members: [alice, bob].map((user_id) => ({ user_id, workspace_id: ws, status: "active", transcriber_daily_minutes_limit: 360 })),
   upcoming_calls: [eventA, eventB].map((id, i) => ({ id, owner_id: i ? bob : alice, workspace_id: ws, scheduled_at: scheduledAt,
     meeting_url: "https://meet.google.com/abc-defg-hij", source: "manual", completed_at: null, title: "Team call", prep: null, visibility: "private" })),
   meet_bots: [], meet_capture_subscribers: [], meet_stream_tokens: [], interview_sessions: [],
+  app_config: [],
 };
 const queries = [], providerCreates = [], providerEdits = [], providerDeletes = [];
 const deleteStatusByBot = new Map();
 let editStatus = 200;
+let failedRead = null;
 let counter = 0;
 const db = { from(table) {
   assert.ok(rows[table], `Unexpected database table ${table}`);
@@ -47,7 +50,7 @@ const db = { from(table) {
     upsert(value, valueOptions = {}) { query.operation = "upsert"; payload = value; options = valueOptions; return this; },
     update(value) { query.operation = "update"; payload = value; return this; },
     eq(key, value) { query.filters.push([key, value]); predicates.push((r) => r[key] === value); return this; },
-    in(key, values) { predicates.push((r) => values.includes(r[key])); return this; },
+    in(key, values) { query.filters.push([key, values]); predicates.push((r) => values.includes(r[key])); return this; },
     is(key, value) { query.filters.push([key, value]); predicates.push((r) => r[key] === value); return this; },
     not(key, _operator, value) { predicates.push((r) => r[key] !== value); return this; },
     gte(key, value) { predicates.push((r) => r[key] >= value); return this; },
@@ -57,6 +60,7 @@ const db = { from(table) {
     limit(value) { limit = value; return this; },
     single() { single = true; return this; }, maybeSingle() { single = true; return this; },
     then(resolve, reject) {
+      if (query.operation === "select" && failedRead === table) return Promise.resolve({ data: null, error: new Error("Read unavailable") }).then(resolve, reject);
       let found;
       if (["insert", "upsert"].includes(query.operation)) {
         found = (Array.isArray(payload) ? payload : [payload]).map((value) => {
@@ -93,7 +97,7 @@ const dependencies = (name) => {
   if (name === "next/server") return next;
   if (name.endsWith("supabase")) return database;
   if (name.endsWith("record-scope")) return scoped;
-  if (name.endsWith("shared-call-access")) return { resolveSharedCalendarOccurrence: async () => null, grantSharedCaptureAccess: async () => { throw new Error("Unexpected shared grant"); } };
+  if (name.endsWith("shared-call-access")) return { resolveSharedCalendarOccurrence: requested => occurrenceResolver(requested), grantSharedCaptureAccess: async ({ occurrence }) => { assert.equal(occurrence.requested.workspace_id, ws); } };
   if (name.endsWith("recall-scheduled-bot")) return {
     ...load("lib/recall-scheduled-bot.ts", dependencies),
     cancelScheduledNotetakers: async () => { throw new Error("Unexpected reservation detach"); },
@@ -201,6 +205,12 @@ try {
   rows.workspace_members[1].status = "active";
   rows.upcoming_calls.forEach((call) => { call.source = "google"; call.external_id = "same-provider-occurrence"; });
   const { meetingInstanceKey } = load("lib/shared-meet-capture.ts", dependencies);
+  rows.app_config.push({ workspace_id: ws, owner_id: bob, visibility: "private", key: "notetaker_schedule_preference", value: '{"leadMinutes":2}' });
+  occurrenceResolver = async requested => ({
+    requested, canonical: rows.upcoming_calls[0], hostOwnerId: alice,
+    instanceKey: meetingInstanceKey(requested.meeting_url, requested.scheduled_at),
+    members: [alice, bob].map((userId, i) => ({ userId, upcomingId: i ? eventB : eventA, accessRole: i ? "attendee" : "host" })),
+  });
   const capture = rows.meet_bots[0];
   capture.meeting_instance_key = meetingInstanceKey(rows.upcoming_calls[0].meeting_url, scheduledAt);
   const oldTime = new Date(Date.parse(scheduledAt) - 300000).toISOString();
@@ -214,12 +224,12 @@ try {
   }) }));
   assert.equal((await sharedStart(eventA, sessions[0])).status, 200);
   assert.equal(providerEdits.length, 1);
-  assert.equal(capture.scheduled_join_at, new Date(Date.parse(scheduledAt) - 60000).toISOString());
+  assert.equal(capture.scheduled_join_at, new Date(Date.parse(scheduledAt) - 120000).toISOString());
   assert.deepEqual(rows.meet_capture_subscribers.map((row) => row.session_id), sessions, "Both private rooms survive retiming");
   assert.ok(rows.meet_capture_subscribers.every((row) => row.capture_id === capture.id));
   scope = { workspaceId: ws, userId: bob };
   assert.equal((await sharedStart(eventB, sessions[1])).status, 200);
-  assert.equal(providerEdits.length, 1, "Second attendee reuses the confirmed timing without another PATCH");
+  assert.equal(providerEdits.length, 1, "Different one/two-minute preferences converge on the earliest arrival without another PATCH");
   capture.scheduled_join_at = oldTime;
   editStatus = 400;
   assert.equal((await sharedStart(eventB, sessions[1])).status, 200, "A provider-locked reservation is kept, not cancelled or duplicated");
@@ -235,7 +245,7 @@ try {
   editStatus = 200;
   rows.meet_capture_subscribers.splice(1, 1);
   assert.equal((await sharedStart(eventB, sessions[1])).status, 200, "An attendee without an existing subscription can align the same verified occurrence");
-  assert.equal(capture.scheduled_join_at, new Date(Date.parse(scheduledAt) - 60000).toISOString());
+  assert.equal(capture.scheduled_join_at, new Date(Date.parse(scheduledAt) - 120000).toISOString());
   assert.equal(rows.meet_capture_subscribers.length, 2);
   assert.deepEqual(rows.meet_capture_subscribers.map((row) => row.session_id), sessions);
   assert.equal(providerCreates.length, 3);
@@ -285,7 +295,44 @@ try {
   assert.equal(rows.meet_bots.find((row) => row.id === "late-capture").bot_id, "bot-4");
   assert.equal(rows.meet_capture_subscribers.find((row) => row.id === "late-subscriber").status, "active");
 
-  console.log("Background dispatch, early and late immediate manual launch, one-minute timing, shared reservation retiming, locked-provider safety, manual focus preservation and two-user isolation passed");
+  rows.meet_bots.forEach(row => { row.status = "left"; });
+  rows.meet_capture_subscribers.forEach(row => { row.status = "ended"; });
+  occurrenceResolver = async () => null;
+  scope = { workspaceId: ws, userId: bob }; browser = false;
+  const eventD = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  rows.upcoming_calls.push({ ...rows.upcoming_calls[1], id: eventD, source: "manual", meeting_url: "https://teams.microsoft.com/l/meetup-join/test" });
+  const personal = await scheduler.scheduleAutomaticNotetakersForUpcomingIds([eventD, eventA]);
+  assert.equal(personal.scheduled, 1);
+  assert.equal(providerCreates.at(-1).join_at, new Date(Date.parse(scheduledAt) - 120000).toISOString());
+  assert.equal(providerCreates.at(-1).automatic_leave.waiting_room_timeout, 900);
+  assert.equal(providerCreates.at(-1).automatic_leave.noone_joined_timeout, 900);
+  assert.equal(providerCreates[0].automatic_leave.waiting_room_timeout, 600, "Google Meet's provider lobby cap is preserved");
+  assert.equal(providerCreates[0].automatic_leave.noone_joined_timeout, 900);
+  assert.equal(providerCreates.at(-1).automatic_leave.silence_detection.timeout, 300);
+
+  const { getPrecallLeadMs } = load("lib/precall-preferences.ts", dependencies);
+  rows.app_config.push(
+    { workspace_id: ws, owner_id: alice, visibility: "team", key: "notetaker_schedule_preference", value: '{"leadMinutes":2}' },
+    { workspace_id: "other", owner_id: alice, visibility: "private", key: "notetaker_schedule_preference", value: '{"leadMinutes":2}' },
+    { workspace_id: ws, owner_id: "unrelated", visibility: "private", key: "notetaker_schedule_preference", value: '{"leadMinutes":2}' },
+  );
+  assert.equal(await getPrecallLeadMs({ workspaceId: ws, userId: alice }, null), 60000, "Team, other-workspace and unrelated preferences never affect this person's private meeting");
+  assert.equal(await getPrecallLeadMs({ workspaceId: ws, userId: bob }, null), 120000);
+  const occurrence = {
+    requested: rows.upcoming_calls[0],
+    members: [{ userId: alice }, { userId: bob }],
+  };
+  assert.equal(await getPrecallLeadMs({ workspaceId: ws, userId: alice }, occurrence), 120000);
+  rows.workspace_members[1].status = "removed";
+  assert.equal(await getPrecallLeadMs({ workspaceId: ws, userId: alice }, occurrence), 60000, "Inactive attendees cannot influence a shared schedule");
+  await assert.rejects(getPrecallLeadMs({ workspaceId: ws, userId: bob }, null), /Active notetaker account required/);
+  await assert.rejects(getPrecallLeadMs({ workspaceId: "other", userId: alice }, occurrence), /scope could not be verified/);
+  await assert.rejects(getPrecallLeadMs({ workspaceId: ws, userId: bob }, occurrence), /scope could not be verified/);
+  failedRead = "app_config";
+  await assert.rejects(getPrecallLeadMs({ workspaceId: ws, userId: alice }, null), /Read unavailable/, "A failed preference read is not treated as consent to a default schedule");
+  failedRead = null;
+
+  console.log("Background dispatch, manual launch, per-account two-minute timing, shared earliest arrival, 15-minute idle/Teams wait, Google lobby cap, private focus preservation and two-user isolation passed");
 } finally {
   globalThis.fetch = savedFetch;
   if (env.key === undefined) delete process.env.RECALL_API_KEY; else process.env.RECALL_API_KEY = env.key;

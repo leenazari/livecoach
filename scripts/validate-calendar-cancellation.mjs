@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import vm from "node:vm";
-import { PRECALL_LEAD_MS } from "../lib/precall-schedule.ts";
+import { MAX_PRECALL_LEAD_MS } from "../lib/precall-schedule.ts";
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
 const now = Date.now();
@@ -10,7 +10,7 @@ const at = minutes => new Date(now + minutes * 60000).toISOString();
 const rows = {
   meet_bots: [
     { id: "shared", bot_id: "shared-provider", owner_id: "alice", source_upcoming_id: "alice-call", scheduled_join_at: at(60) },
-    { id: "waiting", bot_id: "waiting-provider", owner_id: "alice", source_upcoming_id: "waiting-call", scheduled_join_at: at(-0.4) },
+    { id: "waiting", bot_id: "waiting-provider", owner_id: "alice", source_upcoming_id: "waiting-call", scheduled_join_at: at(-1.5) },
     { id: "early", bot_id: "early-provider", owner_id: "alice", source_upcoming_id: "early-call", scheduled_join_at: at(-0.5) },
     { id: "ongoing", bot_id: "ongoing-provider", owner_id: "alice", source_upcoming_id: "ongoing-call", scheduled_join_at: at(-8) },
   ].map(row => ({ ...row, status: "active", workspace_id: "workspace-a" })),
@@ -52,7 +52,7 @@ vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.Mo
   require(name) {
     if (name === "server-only") return {};
     if (name.endsWith("supabase")) return { supabaseService: db };
-    if (name.endsWith("precall-schedule")) return { PRECALL_LEAD_MS };
+    if (name.endsWith("precall-schedule")) return { MAX_PRECALL_LEAD_MS };
     throw new Error(name);
   },
 });
@@ -63,7 +63,7 @@ assert.equal(rows.meet_capture_subscribers.find(r => r.id === "alice-shared").st
 assert.equal(rows.meet_capture_subscribers.find(r => r.id === "bob-shared").status, "scheduled");
 assert.equal((await cancel("bob", ["bob-call"])).cancelled, 1);
 assert.equal(calls.length, 1, "Last subscriber cancels the provider reservation");
-assert.equal((await cancel("alice", ["waiting-call"])).cancelled, 1, "Cancel during the one-minute arrival window withdraws an idle bot");
+assert.equal((await cancel("alice", ["waiting-call"])).cancelled, 1, "Cancel during the two-minute arrival window withdraws an idle bot");
 assert.equal((await cancel("alice", ["early-call", "ongoing-call"])).cancelled, 0, "Early speech and ongoing calls are protected");
 assert.equal((await cancel("alice", ["waiting-call"])).cancelled, 0, "Cancellation replay creates no new provider operation");
 assert.equal((await cancel("alice", ["early-call"], "workspace-b")).cancelled, 0);
