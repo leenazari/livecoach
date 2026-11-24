@@ -13,6 +13,23 @@ import LiveCoachLogo from "@/components/LiveCoachLogo";
 // the choice is remembered (localStorage). When open it pushes the page content
 // right by padding the body, so nothing is hidden behind it.
 type Item = { href: string; label: string; icon: string; tab?: string };
+const MOBILE_ICON_PATHS: Record<string, string> = {
+  Today: "M8 3v4m8-4v4M3 10h18M5 5h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zm4 10h6",
+  Calls: "M7 3H4a1 1 0 0 0-1 1c0 9.4 7.6 17 17 17a1 1 0 0 0 1-1v-3l-5-2-2 2a14 14 0 0 1-7-7l2-2z",
+  Start: "M9 5v14l11-7z",
+  Tasks: "M9 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3M9 3h6v4H9zm0 11 2 2 4-4",
+  Outreach: "m22 2-7 20-4-9-9-4 20-7zM22 2 11 13",
+  More: "M5 12h.01M12 12h.01M19 12h.01",
+};
+
+function MobileNavIcon({ label }: { label: string }) {
+  return (
+    <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={label === "More" ? 3 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d={MOBILE_ICON_PATHS[label]} />
+    </svg>
+  );
+}
+
 type ViewerRole = "owner" | "manager" | "sales";
 type TeamStatus = { role?: ViewerRole; department?: string; callsFirst?: boolean };
 
@@ -363,7 +380,7 @@ function NavMenuInner({
                 }`}
               >
                 <span className={center ? "lc-golden-action -mt-3 flex h-11 w-11 items-center justify-center rounded-full border border-amber/60 bg-amber/20 text-[1.1rem] leading-none text-amber" : "text-[1.05rem] leading-none"}>
-                  {t.icon}
+                  <MobileNavIcon label={t.label} />
                 </span>
                 {t.label}
               </Link>
@@ -375,7 +392,7 @@ function NavMenuInner({
                 {notificationCount > 9 ? "9+" : notificationCount}
               </span>
             ) : null}
-            <span className="text-[1.05rem] leading-none">•••</span>More
+            <MobileNavIcon label="More" />More
           </button>
         </nav>
       </>
