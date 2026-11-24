@@ -268,6 +268,7 @@ assert.ok(!requests.some(url => url.endsWith('/emails')));
 assert.match(document.body.textContent, /Sheet · Contacted/); assert.match(document.body.textContent, /No demo or reply event recorded/);
 assert.doesNotMatch(document.body.textContent, /Email history recorded|No tracked activity/);
 assert.equal(document.querySelector('a[href*="import-leads"]').getAttribute('href'), '/crm/outreach?tab=prospects#import-leads');
+assert.equal(document.querySelector('a[href*="import-leads"]').textContent, 'Upload to Outreach', 'Make the existing importer destination explicit');
 snapshot('leads');
 await act(async () => button('Read email history').click());
 assert.match(document.body.textContent, /Friday works for us/); assert.match(document.body.textContent, /Other people’s mailboxes/);
