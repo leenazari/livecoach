@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import { scheduledCallSessionId } from "../lib/scheduled-call-session.ts";
-import { precallJoinAt, precallScheduleAction } from "../lib/precall-schedule.ts";
+import { MAX_PRECALL_LEAD_MS, precallPreferenceLeadMs, precallJoinAt, precallScheduleAction } from "../lib/precall-schedule.ts";
 import { currentRecallBotState } from "../lib/recall-bot-status.ts";
 
 const read = (path) =>
@@ -35,6 +35,14 @@ assert.equal(precallJoinAt("2026-10-04T09:01:00Z", nowMs), null);
 assert.equal(precallJoinAt("2026-10-04T09:01:20Z", nowMs), "2026-10-04T09:00:20.000Z", "A late calendar update still respects the future launch time");
 assert.equal(precallJoinAt("2026-10-24T10:00:00+01:00", nowMs), "2026-10-24T08:59:00.000Z");
 assert.equal(precallJoinAt("bad-date", nowMs), null);
+assert.equal(precallPreferenceLeadMs('{"leadMinutes":2}'), 120000);
+for (const value of [null, "bad", '{"leadMinutes":60}', '{"leadMinutes":"2"}', '{"leadMinutes":0}']) {
+  assert.equal(precallPreferenceLeadMs(value), 60000, "Invalid settings cannot trigger an unbounded early join");
+}
+assert.equal(precallJoinAt("2026-10-05T09:00:00Z", nowMs, MAX_PRECALL_LEAD_MS), "2026-10-05T08:58:00.000Z");
+assert.equal(precallJoinAt("2026-10-25T10:00:00+00:00", nowMs, MAX_PRECALL_LEAD_MS), "2026-10-25T09:58:00.000Z");
+assert.equal(precallJoinAt("2026-10-24T10:00:00+01:00", nowMs, MAX_PRECALL_LEAD_MS), "2026-10-24T08:58:00.000Z");
+assert.equal(precallJoinAt("2026-10-04T09:01:20Z", nowMs, MAX_PRECALL_LEAD_MS), null, "Late discovery dispatches immediately");
 for (const input of [
   { scheduledAt: "2026-10-05T09:00:00Z", completed: false, supportedLink: true, expected: "schedule" },
   { scheduledAt: "2026-10-04T08:30:00Z", completed: false, supportedLink: true, expected: "cancel" },
@@ -64,10 +72,11 @@ assert.match(scheduler, /ignoreDuplicates: true/);
 assert.match(scheduler, /startBot\(/);
 assert.match(scheduler, /autoStart: true/);
 
-// The one-minute-before launch is reserved with Recall. A repeated sync reuses
+// The account's early launch is reserved with Recall. A repeated sync reuses
 // the reservation, while time/link changes and cancellations remove the old
 // provider bot before replacing or deleting its source event.
-assert.match(start, /precallJoinAt\(verifiedScheduledAt, now\.getTime\(\)\)/);
+assert.match(start, /precallJoinAt\(verifiedScheduledAt, now\.getTime\(\), precallLeadMs\)/);
+assert.match(start, /getPrecallLeadMs\(accountScope, sharedOccurrence\)/);
 assert.match(start, /automaticDispatch && !upcomingId/);
 assert.match(start, /code: "calendar_call_changed"/);
 assert.match(start, /join_at: scheduledJoinAt/);
@@ -99,4 +108,4 @@ assert.match(start, /waiting_room_timeout: waitingRoomTimeoutSeconds/);
 assert.match(start, /activate_after: automaticDispatch \? 600 : 60/);
 assert.match(start, /timeout: 300/);
 
-console.log("Event-scheduled one-minute pre-call bot validation passed");
+console.log("Event-scheduled per-account one/two-minute pre-call bot validation passed");

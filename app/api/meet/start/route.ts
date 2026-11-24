@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
 import { PRECALL_LEAD_MS, precallJoinAt, precallScheduleAction } from "@/lib/precall-schedule";
+import { getPrecallLeadMs } from "@/lib/precall-preferences";
 import { currentRecallBotState } from "@/lib/recall-bot-status";
 import { captureAdmissionTimeouts } from "@/lib/call-capture-lifecycle";
 import {
@@ -344,10 +345,13 @@ export async function POST(req: NextRequest) {
     }
 
     // Calendar sync reserves one provider bot as soon as the event is known.
-    // The one-minute lead time is derived from the exact owned calendar row,
+    // The account's lead time is applied to the exact owned calendar row,
     // never from an arbitrary timestamp supplied by a browser.
+    const precallLeadMs = verifiedScheduledAt
+      ? await getPrecallLeadMs(accountScope, sharedOccurrence)
+      : PRECALL_LEAD_MS;
     const scheduledJoinAt = automaticDispatch
-      ? precallJoinAt(verifiedScheduledAt, now.getTime())
+      ? precallJoinAt(verifiedScheduledAt, now.getTime(), precallLeadMs)
       : null;
     const scheduledDispatch = scheduledJoinAt !== null;
     const scheduledJoinAtMs = scheduledJoinAt ? Date.parse(scheduledJoinAt) : NaN;
@@ -356,7 +360,7 @@ export async function POST(req: NextRequest) {
     // Repeated calendar syncs are idempotent. A changed time or meeting link
     // cancels the old provider reservation before creating its replacement.
     if (verifiedUpcomingId && verifiedScheduledAt) {
-      const expectedJoinAtMs = Date.parse(verifiedScheduledAt) - PRECALL_LEAD_MS;
+      const expectedJoinAtMs = Date.parse(verifiedScheduledAt) - precallLeadMs;
       const { data: reservedSubscriptions, error: reservedSubscriptionError } =
         await supabaseService
           .from("meet_capture_subscribers")
@@ -674,7 +678,7 @@ export async function POST(req: NextRequest) {
           await alignSharedNotetakerTime({
             workspaceId: accountScope.workspaceId, instanceKey: sharedInstanceKey,
             capture: sharedCapture,
-            joinAt: new Date(Date.parse(verifiedScheduledAt) - PRECALL_LEAD_MS).toISOString(), region, key,
+            joinAt: new Date(Date.parse(verifiedScheduledAt) - precallLeadMs).toISOString(), region, key,
           });
         }
         if (sharedOccurrence) {

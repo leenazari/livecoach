@@ -1,9 +1,18 @@
 export const PRECALL_LEAD_MS = 60 * 1000;
+export const MAX_PRECALL_LEAD_MS = 2 * 60 * 1000;
+export const PRECALL_PREFERENCE_KEY = "notetaker_schedule_preference";
 
-export function precallJoinAt(scheduledAt: unknown, nowMs = Date.now()) {
+export function precallPreferenceLeadMs(value: string | null | undefined) {
+  try {
+    return JSON.parse(value || "null")?.leadMinutes === 2
+      ? MAX_PRECALL_LEAD_MS : PRECALL_LEAD_MS;
+  } catch { return PRECALL_LEAD_MS; }
+}
+
+export function precallJoinAt(scheduledAt: unknown, nowMs = Date.now(), leadMs = PRECALL_LEAD_MS) {
   const start = typeof scheduledAt === "string" ? Date.parse(scheduledAt) : NaN;
   if (!Number.isFinite(start)) return null;
-  const joinAt = start - PRECALL_LEAD_MS;
+  const joinAt = start - (leadMs === MAX_PRECALL_LEAD_MS ? leadMs : PRECALL_LEAD_MS);
   return joinAt > nowMs ? new Date(joinAt).toISOString() : null;
 }
 

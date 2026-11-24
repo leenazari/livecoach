@@ -1,7 +1,7 @@
 import "server-only";
 
 import { supabaseService } from "@/lib/supabase";
-import { PRECALL_LEAD_MS } from "@/lib/precall-schedule";
+import { MAX_PRECALL_LEAD_MS } from "@/lib/precall-schedule";
 
 async function recallRequest(
   endpoint: string,
@@ -217,7 +217,7 @@ export async function cancelScheduledNotetakers(input: {
     new Set((loadedSubscriptions || []).map((row: any) => String(row.capture_id)))
   );
   const nowIso = new Date().toISOString();
-  const preMeetingBoundary = new Date(Date.now() - PRECALL_LEAD_MS).toISOString();
+  const preMeetingBoundary = new Date(Date.now() - MAX_PRECALL_LEAD_MS).toISOString();
   const { data: subscribedCaptures, error: subscribedCaptureError } =
     subscribedCaptureIds.length
       ? await supabaseService
