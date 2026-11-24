@@ -362,7 +362,7 @@ function NavMenuInner({
                   active ? "text-amber" : "text-muted"
                 }`}
               >
-                <span className={center ? "-mt-3 flex h-11 w-11 items-center justify-center rounded-full border border-amber/60 bg-amber/20 text-[1.1rem] leading-none text-amber" : "text-[1.05rem] leading-none"}>
+                <span className={center ? "lc-golden-action -mt-3 flex h-11 w-11 items-center justify-center rounded-full border border-amber/60 bg-amber/20 text-[1.1rem] leading-none text-amber" : "text-[1.05rem] leading-none"}>
                   {t.icon}
                 </span>
                 {t.label}

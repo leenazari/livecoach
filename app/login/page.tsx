@@ -178,7 +178,7 @@ export default function LoginPage() {
           <div className="flex gap-2">
             <button
               onClick={() => router.push(postLoginPath)}
-              className="rounded-full bg-amber px-6 py-2.5 font-mono text-sm font-medium uppercase tracking-wider text-ink transition hover:bg-amberglow"
+              className="lc-golden-action rounded-full bg-amber px-6 py-2.5 font-mono text-sm font-medium uppercase tracking-wider text-ink transition hover:bg-amberglow"
             >
               Open LiveCoach
             </button>
@@ -254,7 +254,7 @@ export default function LoginPage() {
                 type="button"
                 onClick={otpSent ? verifyEmailLogin : requestEmailLogin}
                 disabled={busy}
-                className="rounded-full bg-amber px-7 py-3 font-mono text-sm font-medium uppercase tracking-wider text-ink transition hover:bg-amberglow disabled:opacity-50"
+                className="lc-golden-action rounded-full bg-amber px-7 py-3 font-mono text-sm font-medium uppercase tracking-wider text-ink transition hover:bg-amberglow disabled:opacity-50"
               >
                 {busy
                   ? "working..."
@@ -311,7 +311,7 @@ export default function LoginPage() {
                 type="button"
                 onClick={submitPassword}
                 disabled={busy}
-                className="rounded-full bg-amber px-7 py-3 font-mono text-sm font-medium uppercase tracking-wider text-ink transition hover:bg-amberglow disabled:opacity-50"
+                className="lc-golden-action rounded-full bg-amber px-7 py-3 font-mono text-sm font-medium uppercase tracking-wider text-ink transition hover:bg-amberglow disabled:opacity-50"
               >
                 {busy ? "working..." : "Sign in"}
               </button>
