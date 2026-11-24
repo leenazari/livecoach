@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { crmBlockerPayload } from '@/lib/crm-blocker';
 import { LEAD_STATUSES, LEAD_VIEWS, LEAD_DEMO_FILTERS, LEAD_CONTACT_FILTERS, LEAD_SORTS, matchesLeadView, hasDemoOpened, hasLeadPhone, compareLeadAdded } from '@/lib/assigned-new-leads';
 import { AssignedLeadAccessError, loadAssignedNewLeads } from '@/lib/assigned-new-leads-server';
+import { loadRecordedCompanyEmails } from '@/lib/recorded-company-emails-server';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 const headers = { 'Cache-Control': 'private, no-store' };
@@ -28,7 +29,17 @@ export async function GET(req: NextRequest) {
     const filtered = candidates.filter(l => matchesLeadView(l, view) && (!status || l.status === status));
     filtered.sort(sort === 'company' ? (a, b) => a.companyName.localeCompare(b.companyName) || a.id.localeCompare(b.id) : sort === 'oldest' ? (a, b) => compareLeadAdded(b, a) : compareLeadAdded);
     const pageSize = 25;
-    return NextResponse.json({ ...result, leads: filtered.slice((page - 1) * pageSize, page * pageSize), total: filtered.length, allCount: result.leads.length, page, pageSize, viewCounts }, { headers });
+    const leads = filtered.slice((page - 1) * pageSize, page * pageSize);
+    let emailHistoryAvailable = true;
+    try {
+      // Bounded metadata only, after pagination. No live mailbox calls or AI.
+      const history = await loadRecordedCompanyEmails(leads.map(lead => lead.id));
+      for (const lead of leads) lead.recentEmail = history.messages.find(message => message.companyId === lead.id);
+    } catch {
+      emailHistoryAvailable = false;
+      console.error('new_lead_email_preview_failed', { code: 'read_failed' });
+    }
+    return NextResponse.json({ ...result, leads, total: filtered.length, allCount: result.leads.length, page, pageSize, viewCounts, emailHistoryAvailable }, { headers });
   } catch (error) {
     const denied = error instanceof AssignedLeadAccessError;
     console.error('New lead list failed', denied ? 'access_denied' : (error as { code?: string })?.code || 'read_failed');

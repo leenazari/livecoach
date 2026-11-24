@@ -65,6 +65,15 @@ export default function StagedOutreachImports({
     }
   }, []);
   useEffect(() => { void loadAccess(); }, [loadAccess]);
+  useEffect(() => {
+    const openFromLink = () => {
+      if (window.location.hash !== '#import-leads') return;
+      setOpen(true);
+      document.getElementById('import-leads')?.scrollIntoView({ block: 'start' });
+    };
+    openFromLink(); window.addEventListener('hashchange', openFromLink);
+    return () => window.removeEventListener('hashchange', openFromLink);
+  }, []);
 
   const parsedRows = useMemo(() => parseCsvRows(csv), [csv]);
   const headerError = useMemo(() => getOutreachImportHeaderError(parsedRows), [parsedRows]);
@@ -171,7 +180,7 @@ export default function StagedOutreachImports({
   };
 
   return (
-    <section className="mb-3 rounded-xl border border-amber/40 bg-amber/[0.05] p-3">
+    <section id="import-leads" className="mb-3 scroll-mt-32 rounded-xl border border-amber/40 bg-amber/[0.05] p-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="font-mono text-[0.52rem] uppercase tracking-[0.18em] text-amber">

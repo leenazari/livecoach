@@ -1,3 +1,4 @@
+import type { RecordedCompanyEmail } from '@/lib/recorded-company-emails';
 // A projection of canonical client records, not a second lead database.
 export const IMPORTED_LEAD_VERSION = 1;
 export const LEAD_STATUSES = ['new', 'contacted', 'demo_done', 'no_response', 'not_interested', 'on_hold'] as const;
@@ -19,11 +20,13 @@ export type AssignedLead = {
   signal: string; signalUrl: string; notes: string;
   restriction: string; emailHistory: string; pageStatus: string; demoOpened: string;
   companyOverview: string; importedAt: string; sourceOrder: number;
+  recentEmail?: RecordedCompanyEmail;
 };
 export type AssignedLeadList = {
   leads: AssignedLead[]; total: number; allCount: number; page: number; pageSize: number;
   isOwner: boolean; owners: { id: string; name: string }[];
   viewCounts: Record<string, number>;
+  emailHistoryAvailable?: boolean;
 };
 const text = (v: unknown, max = 2000) => typeof v === 'string' ? v.trim().slice(0, max) : '';
 export function safeLeadUrl(value: unknown): string {
