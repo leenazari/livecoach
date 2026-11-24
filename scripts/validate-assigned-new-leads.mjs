@@ -120,6 +120,6 @@ assert.equal((await route.GET(req('view=not_contacted'))).data.total, 0);
 const followup = await route.GET(req('view=follow_up'));
 assert.equal(followup.data.total, 1); assert.equal(followup.data.viewCounts.all, 1, 'Counts cannot include another user');
 assert.doesNotMatch(JSON.stringify(followup), /sharon-lead|nikhara-lead/);
-assert.match(read('components/crm/AssignedNewLeads.tsx'), /Open demo page/);
+assert.match(read('components/crm/AssignedLeadDetails.tsx'), /Open demo page/);
 assert.doesNotMatch(read('lib/assigned-new-leads-server.ts'), /email_context|commercial_memory|select\(['"]\*/);
 console.log('Assigned new leads passed. Canonical contacts and assignment, owner-only team view, two-user and marketing isolation, inactive and foreign denial, hidden fields, revoked shares, protected relationships, safe URLs, deterministic mapping and filters.');

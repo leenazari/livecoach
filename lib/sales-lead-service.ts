@@ -8,7 +8,7 @@ export async function salesLeadScope() {
   const scope = requireRequestScope();
   const { data, error } = await supabaseService.from('workspace_members').select('role,status').eq('workspace_id', scope.workspaceId).eq('user_id', scope.userId).maybeSingle();
   if (error) throw error;
-  if (data?.status !== 'active') throw new Error('sales_lead_access');
+  if (data?.status !== 'active' || !['owner', 'manager', 'sales'].includes(data.role)) throw new Error('sales_lead_access');
   return { ...scope, role: data.role as 'owner' | 'manager' | 'sales' };
 }
 export function salesLeadFailure(error: unknown, action: string) {

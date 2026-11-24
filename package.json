@@ -6,6 +6,7 @@
     "node": "22.x"
   },
   "scripts": {
+    "validate:lead-workspace": "node scripts/validate-lead-workspace.mjs",
     "validate:sales-history-navigation": "node scripts/validate-sales-history-navigation.mjs",
     "validate:call-recap-emails": "node scripts/validate-call-recap-emails.mjs",
     "validate:calendar-sync-confirmation": "node scripts/validate-calendar-sync-confirmation.mjs",
