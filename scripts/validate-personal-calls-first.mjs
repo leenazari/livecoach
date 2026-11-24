@@ -36,11 +36,13 @@ const dom=new JSDOM('<div id="root"></div>',{url:'https://crm.test/crm'});
 Object.assign(globalThis,{window:dom.window,document:dom.window.document,localStorage:dom.window.localStorage,IS_REACT_ACT_ENVIRONMENT:true});
 let mobile=true, preference=true, viewerRole='owner', department='sales', statusUnavailable=false, pathname='/crm';
 window.matchMedia=()=>({matches:mobile,addEventListener(){},removeEventListener(){}});
+let cachedStatus=null, pendingStatus=null;
 const Nav=load('components/crm/NavMenu.tsx',name=>{
   if(name==='next/link') return {default:({children,...props})=>React.createElement('a',props,children)};
   if(name==='next/navigation') return {usePathname:()=>pathname,useRouter:()=>({}),useSearchParams:()=>new URLSearchParams()};
-  if(name==='@/lib/crm') return {getCached:()=>null,crmFetch:async(url)=>{
+  if(name==='@/lib/crm') return {getCached:()=>cachedStatus,crmFetch:async(url)=>{
     if(url==='/api/crm/inbound-leads/access') return {canReview:false};
+    if(pendingStatus) return pendingStatus;
     if(statusUnavailable) throw new Error('Status unavailable');
     return {role:viewerRole,department,callsFirst:preference};
   },clearCrmCache(){}};
@@ -56,6 +58,21 @@ for(const personal of [true,false]) {
   assert.deepEqual(hrefs,personal?['/crm','/crm/calls','/call','/crm/tasks']:['/crm/outreach','/crm','/call','/crm/tasks']);
   await act(async()=>root.unmount());
 }
+// Each destination remounts the menu. Keep the tabs in the correct order
+// and highlight the URL while a new status fetch is still pending.
+cachedStatus={role:'owner',department:'sales',callsFirst:true};
+pendingStatus=new Promise(()=>{});
+for(const route of ['/crm/calls','/crm','/crm/calls']) {
+  pathname=route;
+  const root=createRoot(document.getElementById('root'));
+  await act(async()=>{root.render(React.createElement(Nav));});
+  const links=[...document.querySelectorAll('nav[aria-label="Main navigation"] a')];
+  assert.deepEqual(links.map(a=>a.getAttribute('href')),['/crm','/crm/calls','/call','/crm/tasks']);
+  assert.deepEqual(links.filter(a=>a.getAttribute('aria-current')==='page').map(a=>a.getAttribute('href')),[route]);
+  await act(async()=>root.unmount());
+}
+pendingStatus=null;
+cachedStatus=null;
 // Calls must be a direct destination for staff without enabling the owner's
 // private calls-first dashboard preference or hiding Outreach and Tasks.
 for(const role of ['sales','manager']) {
