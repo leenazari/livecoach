@@ -20,6 +20,7 @@ import { withTransientSummaryRetry } from "@/lib/call-summary-retry";
 import { normalizeCallSummaryActions } from "@/lib/call-summary-actions";
 import { resolveRecordScope } from "@/lib/record-scope";
 import { loadSharedCallAccess } from "@/lib/shared-call-access";
+import { callTranscriptHash, callSummaryContentHash, revisedSummaryPackage, summarySourceEvidence } from "@/lib/call-summary-freshness";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -168,7 +169,7 @@ async function condenseTranscript(transcript: string): Promise<string> {
 export async function POST(req: NextRequest) {
   try {
     const {
-      transcript,
+      transcript: requestedTranscript,
       knowledgeContext,
       role,
       candidate,
@@ -184,7 +185,7 @@ export async function POST(req: NextRequest) {
       userNotes,
     } = await req.json();
 
-    if (!transcript || transcript.length < 30) {
+    if (typeof requestedTranscript !== "string" || requestedTranscript.length < 30) {
       return NextResponse.json(
         { error: "Not enough conversation to summarise yet." },
         { status: 422 }
@@ -192,6 +193,15 @@ export async function POST(req: NextRequest) {
     }
 
     const account = await resolveRecordScope();
+    const sessionQuery = sessionId ? await supabaseAdmin.from("interview_sessions")
+      .select("session_id,transcript,ended_at")
+      .eq("workspace_id", account.workspaceId).eq("owner_id", account.userId)
+      .eq("session_id", sessionId).maybeSingle() : { data: null, error: null };
+    if (sessionQuery.error) throw sessionQuery.error;
+    if (sessionId && !sessionQuery.data) {
+      return NextResponse.json({ error: "This captured call is not available to your account." }, { status: 404 });
+    }
+    const transcript = sessionQuery.data?.transcript || requestedTranscript;
     const sharedAccess = sessionId
       ? await loadSharedCallAccess({
           workspaceId: account.workspaceId,
@@ -216,23 +226,22 @@ export async function POST(req: NextRequest) {
         : [];
 
     const cacheKey = createHash("sha256")
-      .update(`${transcript}||${fixedComps.join(",")}||${role || ""}`)
+      .update(JSON.stringify([account.workspaceId, account.userId, sessionId || null, transcript, fixedComps, role || "", callType || "", companyId || null, workstreamId || null]))
       .digest("hex");
 
-    // Durable cache: the same call (same transcript + competencies + role)
-    // returns the stored result, so it never regenerates or drifts - even
-    // after a refresh or days later.
-    try {
-      const { data: existing } = await supabaseAdmin
-        .from("interview_summaries")
-        .select("summary")
-        .eq("cache_key", cacheKey)
-        .maybeSingle();
-      if (existing?.summary) {
-        return NextResponse.json({ summary: existing.summary, cached: true });
-      }
-    } catch (e) {
-      console.error("Summary cache lookup failed:", e);
+    // A session ID alone is not proof that the current conversation was
+    // summarised. Older rescheduled meetings could reuse the same room.
+    let existingQuery = supabaseAdmin.from("interview_summaries")
+      .select("id,summary,cache_key,created_at,post_call_package")
+      .eq("workspace_id", account.workspaceId).eq("owner_id", account.userId);
+    existingQuery = sessionId ? existingQuery.eq("session_id", sessionId) : existingQuery.eq("cache_key", cacheKey);
+    const { data: previous, error: previousError } = await existingQuery
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (previousError) throw previousError;
+    if (previous?.summary && (previous.cache_key === cacheKey ||
+      (previous.summary.sourceEvidence?.sessionId === sessionId &&
+       previous.summary.sourceEvidence?.transcriptHash === callTranscriptHash(transcript)))) {
+      return NextResponse.json({ summary: previous.summary, cached: true });
     }
 
     const compInstruction = fixedComps.length
@@ -270,6 +279,8 @@ NO-SHOW / ONE-SIDED CALLS: check who actually spoke before writing anything. If 
 
 Produce a fair, evidence-based post-call assessment. The assessment scores the CALL AS A WHOLE against its target competencies/intent - you are not producing a separate scorecard per person. Base EVERY point on what was actually said in the transcript - never invent. Where the transcript is thin or a competency wasn't explored, say so rather than guessing or padding scores.
 
+Respect the actual stage of the relationship. An agreed trial being configured is implementation progress, not an unqualified cold sale. Keep an agreed trial distinct from a proposed wider rollout. Operational questions and unfinished setup actions are not rejection or objections unless the participant actually says so. Do not manufacture concerns to meet a bullet quota or downgrade a positive outcome solely because pricing or wider adoption was not discussed.
+
 Also extract a short STYLE PROFILE of the HOST (you), drawn ONLY from the host's own lines (labelled "You:", "Interviewer:", or the host's name - NOT the other participants): tone, how they phrase things, formality, warmth, and typical sentence length. This will later be used to match future suggestion wording to their natural style.
 
 Output ONLY valid JSON (no markdown, no preamble) in exactly this shape:
@@ -278,7 +289,7 @@ Output ONLY valid JSON (no markdown, no preamble) in exactly this shape:
   "title": "a short, specific title for this call, e.g. 'Avatar roadmap sync with Mark & Jay'",
   "recommendation": "the overall verdict for THIS kind of call (interview: Strong / Lean yes / Mixed / Lean no / Too early; sales: Hot / Warm / Cold / Dead; support: Resolved / Partly resolved / Unresolved; general: a one-word read)",
   "headline": "one sentence stating the outcome and biggest implication",
-  "overview": "exactly 2 short sentences: first where the call landed, then the decisive reason or unresolved risk. Plain English.",
+  "overview": "exactly 2 short sentences describing the actual outcome and the most important supporting evidence or next step. Mention a risk only if material and evidenced. Plain English.",
   "competencies": [{"name": "competency", "score": 3, "note": "one short line of evidence"}],
   "strengths": ["short bullet", "..."],
   "concerns": ["short bullet", "..."],
@@ -347,7 +358,7 @@ PRIORITY AND FORMAT RULES:
 - The five commercial arrays above are the compact memory future Brain and prep requests will reuse instead of rereading the transcript. Make them dense, non-overlapping and strictly evidence-based.
 - Do not assign a speculative deal value or close probability to a prospect. Those only become meaningful after the conversation establishes usage, buying process, urgency and next-step evidence.
 
-Rules: scores are 1-5 integers. 3-6 items in strengths/concerns/notCovered. "answered" must be "yes", "partial", or "no". "impact" must be "helped", "blocked", "mixed", or "neutral". Action items are short plain-English lines.`;
+Rules: scores are 1-5 integers. 0-6 items in strengths/concerns/notCovered, with no minimum. An empty concerns list is correct when no genuine concern was expressed. "answered" must be "yes", "partial", or "no". "impact" must be "helped", "blocked", "mixed", or "neutral". Action items are short plain-English lines.`;
 
     // Real-length calls (a 30-60 min meeting is 25k-65k chars) push the single
     // scorecard pass past Vercel's 60s function cap, which kills it with a 504
@@ -442,6 +453,7 @@ Return the JSON assessment now.`;
     if (summary && typeof userNotes === "string" && userNotes.trim()) {
       summary.userNotes = userNotes.slice(0, 8000);
     }
+    summary.sourceEvidence = summarySourceEvidence(sessionId || null, transcript);
 
     // OWNERS, COLLAPSED ONTO ONE NAME PER HUMAN.
     //
@@ -568,10 +580,26 @@ Return the JSON assessment now.`;
       ? scheduledWorkstreamId
       : null;
 
+    let summarySaveConfirmed = false;
     try {
-      const { data: savedCall, error: savedCallError } = await supabaseAdmin.from("interview_summaries").insert({
+      // Do not publish a model response if new captured speech arrived during
+      // generation. The existing retry path will assess the new source.
+      if (sessionId) {
+        const { data: latest, error: latestError } = await supabaseAdmin.from("interview_sessions")
+          .select("transcript")
+          .eq("workspace_id", account.workspaceId).eq("owner_id", account.userId)
+          .eq("session_id", sessionId).maybeSingle();
+        if (latestError) throw latestError;
+        if (!latest || (latest.transcript && callTranscriptHash(latest.transcript) !== callTranscriptHash(transcript))) {
+          return NextResponse.json({ error: "More conversation was saved while this summary was being prepared. It will be rebuilt from the latest transcript." }, { status: 409 });
+        }
+      }
+      const values = {
         cache_key: cacheKey,
         post_call_preparation_state: "pending",
+        post_call_preparation_attempts: 0,
+        post_call_preparation_lease: null,
+        post_call_preparation_error: null,
         session_id: sessionId || null,
         candidate: candidate || null,
         role: role || null,
@@ -581,8 +609,19 @@ Return the JSON assessment now.`;
         company_id: resolvedCompanyId,
         workstream_id: resolvedWorkstreamId,
         cost: finalCost,
-      }).select("id, created_at").single();
+      };
+      // Replace the same canonical recap, rather than leaving two competing
+      // summaries for one room. Keep the previous version as private history.
+      const saveQuery = previous ? supabaseAdmin.from("interview_summaries")
+        .update({ ...values, post_call_package: revisedSummaryPackage(previous),
+          created_at: sessionQuery.data?.ended_at || previous.created_at })
+        .eq("workspace_id", account.workspaceId).eq("owner_id", account.userId)
+        .eq("id", previous.id).eq("cache_key", previous.cache_key)
+        : supabaseAdmin.from("interview_summaries").insert(values);
+      const { data: savedCall, error: savedCallError } = await saveQuery.select("id, created_at").single();
       if (savedCallError) throw savedCallError;
+      if (!savedCall?.id) throw new Error("Summary write returned no saved record");
+      summarySaveConfirmed = true;
       // Keep the call-event row in step when we auto-linked one that started
       // without a client (matched by session_id), so both sides agree.
       if (resolvedCompanyId && sessionId) {
@@ -612,7 +651,7 @@ Return the JSON assessment now.`;
           companyId: resolvedCompanyId,
           workstreamId: resolvedWorkstreamId,
           sourceRecordType: "call_summary",
-          sourceRecordId: savedCall.id,
+          sourceRecordId: `${savedCall.id}:${callSummaryContentHash(summary)}`,
           sourceChannel: "video_call",
           occurredAt: savedCall.created_at,
           evidence: {
@@ -663,6 +702,10 @@ Return the JSON assessment now.`;
       }
     } catch (e) {
       console.error("Summary store failed:", e);
+      if (summarySaveConfirmed) {
+        return NextResponse.json({ summary, saved: true, warning: "Your call summary is saved. Updating its linked call or client was not completed. Reopen the call to check its details. You do not need to generate the summary again." });
+      }
+      return NextResponse.json({ error: "The call summary was prepared but saving it was not confirmed. Your transcript is safe. Reopen the call to check the saved summary before retrying." }, { status: 503 });
     }
 
     return NextResponse.json(
@@ -677,7 +720,7 @@ Return the JSON assessment now.`;
   } catch (err: any) {
     console.error("Summary route error:", err);
     return NextResponse.json(
-      { error: err?.message || "Summary failed" },
+      { error: "The call summary could not be completed. Your saved transcript is safe. LiveCoach will retry without replacing it with an earlier call's recap." },
       { status: 500 }
     );
   }

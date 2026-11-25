@@ -10,6 +10,7 @@ import {
   defaultOutlookQuestions,
 } from "@/lib/opportunity-fields";
 import { getRequestScope } from "@/lib/request-scope";
+import { callSummaryContentHash } from "@/lib/call-summary-freshness";
 
 export type OpportunitySignalSource =
   | "call_summary"
@@ -169,6 +170,32 @@ const newerIso = (current: unknown, candidate: string) => {
     : current || null;
 };
 
+// A rebuilt recap remains the same canonical row, but its old assessment
+// receipt must not suppress or overwrite the corrected evidence.
+async function currentCallSignal(receipt: any): Promise<boolean> {
+  if (receipt.source_record_type !== "call_summary") return true;
+  const [summaryId, revision] = String(receipt.source_record_id || "").split(":");
+  const { data, error } = await supabaseAdmin.from("interview_summaries")
+    .select("summary,created_at")
+    .eq("id", summaryId).eq("company_id", receipt.company_id)
+    .eq("owner_id", receipt.owner_id).eq("workspace_id", receipt.workspace_id)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return false;
+  return revision ? revision === callSummaryContentHash(data.summary)
+    : Date.parse(data.created_at) === Date.parse(receipt.occurred_at);
+}
+
+async function ignoreSupersededCallSignal(receipt: any) {
+  if (await currentCallSignal(receipt)) return false;
+  const { error } = await supabaseAdmin.from("opportunity_signal_receipts").update({
+    status: "ignored", result: { reason: "call_summary_rebuilt" },
+    error: null, updated_at: new Date().toISOString(),
+  }).eq("id", receipt.id).eq("owner_id", receipt.owner_id).eq("workspace_id", receipt.workspace_id);
+  if (error) throw error;
+  return true;
+}
+
 async function assessReceipt(receipt: any) {
   const now = new Date().toISOString();
   const nextAttempt = Math.min(3, Number(receipt.attempts || 0) + 1);
@@ -184,6 +211,7 @@ async function assessReceipt(receipt: any) {
   if (!claimed) return { status: "skipped" };
 
   try {
+    if (await ignoreSupersededCallSignal(claimed)) return { status: "ignored" };
     const { data: opportunity, error } = await supabaseAdmin
       .from("opportunities")
       .select("*")
@@ -329,6 +357,8 @@ Rules:
 
     if (!intentProtected && !dealIntent)
       throw new Error("deal intent assessment was incomplete");
+
+    if (await ignoreSupersededCallSignal(claimed)) return { status: "ignored" };
 
     const assessedAt = new Date().toISOString();
     const opportunityPatch: Record<string, unknown> = {

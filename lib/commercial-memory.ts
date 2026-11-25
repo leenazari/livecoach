@@ -2,6 +2,7 @@ import { createHash } from "crypto";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getWorkstreamScope } from "@/lib/workstreams";
 import { defaultOutlookQuestions } from "@/lib/opportunity-fields";
+import { callSummaryContentHash } from "@/lib/call-summary-freshness";
 
 export type CommercialMemory = {
   sourceHash: string;
@@ -228,7 +229,7 @@ export async function getCommercialMemory(
       companyWideOnly: hasMultipleWorkstreams,
       emailAt: emailUpdatedAt,
       email: cut(emailContext, 900),
-      call: call ? [call.id, call.created_at] : null,
+      call: call ? [call.id, call.created_at, callSummaryContentHash(call.summary)] : null,
       tasks: tasks.map((row) => [row.id, row.text, row.kind, row.due_at]),
       opportunity: opportunity ? [opportunity.id, opportunity.updated_at, opportunity.status, opportunity.next_action] : null,
       context: contexts.map((row) => [

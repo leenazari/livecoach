@@ -6,6 +6,7 @@ import { POST as buildCallSummary } from "@/app/api/interview/summary/route";
 import { resolveRecordScope } from "@/lib/record-scope";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolveCallScope } from "@/lib/workstreams";
+import { callSummaryIsCurrent } from "@/lib/call-summary-freshness";
 
 export type CallSummaryPayload = {
   transcript: string;
@@ -114,14 +115,32 @@ export async function runCallSummaryJob(
 
   const { data: existing, error: existingError } = await supabaseAdmin
     .from("interview_summaries")
-    .select("id,summary")
+    .select("id,summary,created_at")
     .eq("workspace_id", accountScope.workspaceId)
     .eq("owner_id", accountScope.userId)
     .eq("session_id", sessionId)
+    .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
   if (existingError) throw existingError;
-  if (existing?.summary) {
+  const { data: session, error: sessionError } = await supabaseAdmin
+    .from("interview_sessions")
+    .select("session_id,transcript,ended_at,summary_attempts,summary_last_try")
+    .eq("workspace_id", accountScope.workspaceId)
+    .eq("owner_id", accountScope.userId)
+    .eq("session_id", sessionId)
+    .maybeSingle();
+  if (sessionError) throw sessionError;
+  if (!session) {
+    return { landed: false, inProgress: false, alreadyDone: false, summary: null, error: "captured call not found" };
+  }
+  // The browser end-call path has already persisted its final transcript.
+  // Prefer that canonical record to an older tab or differently labelled
+  // recovery payload. If capture exists only as utterances, use the supplied
+  // verified capture without creating another raw transcript store.
+  payload = { ...payload, transcript: session.transcript || payload.transcript };
+  const source = { ...session, transcript: payload.transcript };
+  if (existing?.summary && callSummaryIsCurrent(existing, source)) {
     await prepareCallActions(existing.id).catch(() => console.error("Saved call actions queued for recovery"));
     await supabaseAdmin
       .from("interview_sessions")
@@ -138,28 +157,10 @@ export async function runCallSummaryJob(
     };
   }
 
-  const { data: session, error: sessionError } = await supabaseAdmin
-    .from("interview_sessions")
-    .select("session_id,summary_attempts,summary_last_try")
-    .eq("workspace_id", accountScope.workspaceId)
-    .eq("owner_id", accountScope.userId)
-    .eq("session_id", sessionId)
-    .maybeSingle();
-  if (sessionError) throw sessionError;
-  if (!session) {
-    return {
-      landed: false,
-      inProgress: false,
-      alreadyDone: false,
-      summary: null,
-      error: "captured call not found",
-    };
-  }
-
   const previousAttempts = session.summary_attempts;
   const attempts = Number(previousAttempts || 0);
   const previousTry = session.summary_last_try || null;
-  if (!options?.force && summaryClaimIsFresh(previousTry)) {
+  if (summaryClaimIsFresh(previousTry)) {
     return {
       landed: false,
       inProgress: true,
@@ -226,14 +227,24 @@ export async function runCallSummaryJob(
 
   const { data: saved, error: savedError } = await supabaseAdmin
     .from("interview_summaries")
-    .select("id,summary")
+    .select("id,summary,created_at")
     .eq("workspace_id", accountScope.workspaceId)
     .eq("owner_id", accountScope.userId)
     .eq("session_id", sessionId)
+    .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
   if (savedError) throw savedError;
-  const landed = !!saved?.summary;
+  const { data: latestSession, error: latestSessionError } = await supabaseAdmin
+    .from("interview_sessions")
+    .select("session_id,transcript,ended_at")
+    .eq("workspace_id", accountScope.workspaceId)
+    .eq("owner_id", accountScope.userId)
+    .eq("session_id", sessionId).maybeSingle();
+  if (latestSessionError) throw latestSessionError;
+  const landed = !!latestSession && callSummaryIsCurrent(saved, {
+    ...latestSession, transcript: latestSession.transcript || payload.transcript,
+  });
   if (landed && saved?.id) await prepareCallActions(saved.id).catch(() => console.error("Call actions queued for recovery"));
   const error = landed ? null : safeFailure(failure);
   const { error: stateError } = await supabaseAdmin
