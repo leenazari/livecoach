@@ -1323,6 +1323,9 @@ export default function CallPage() {
           if (!call || call.id !== upcoming) {
             throw new Error("This scheduled call could not be verified. Reopen it from your calls list.");
           }
+          const occurrenceRoom = scheduledCallSessionId(upcoming, call.scheduled_at);
+          if (!occurrenceRoom) throw new Error("This meeting's scheduled time could not be verified. Reopen it from your calls list.");
+          setRoom(occurrenceRoom);
           if (call) {
             if (call?.company_id && call?.company && !linkedCompanyRef.current) {
               handleLinkCompany({ id: call.company_id, name: call.company });

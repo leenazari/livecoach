@@ -7,6 +7,7 @@ import { runWithServiceRecordScope } from "@/lib/service-scope";
 import { isVerifiedServiceRequest } from "@/lib/request-scope";
 import { resolveRecordScope } from "@/lib/record-scope";
 import { recoverScheduledCallInputs } from "@/lib/scheduled-call-recovery";
+import { callSummaryIsCurrent } from "@/lib/call-summary-freshness";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -60,11 +61,10 @@ async function runAccount(req: Request) {
     const accountScope = await resolveRecordScope();
     const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
 
-    const [{ data: sessions }, { data: summaries }] = await Promise.all([
-      supabaseAdmin
+    const { data: sessions, error: sessionsError } = await supabaseAdmin
         .from("interview_sessions")
         .select(
-          "session_id, company_id, workstream_id, candidate, role, call_type, transcript, created_at, upcoming_id, updated_at, ended_at, summary_attempts, summary_last_try"
+          "session_id, company_id, workstream_id, candidate, role, call_type, competencies, transcript, created_at, upcoming_id, updated_at, ended_at, summary_attempts, summary_last_try"
         )
         .eq("workspace_id", accountScope.workspaceId)
         .eq("owner_id", accountScope.userId)
@@ -73,17 +73,28 @@ async function runAccount(req: Request) {
         // eligible for recovery regardless of when its room was reserved.
         .gte("updated_at", since)
         .order("updated_at", { ascending: false })
-        .limit(200),
-      supabaseAdmin
+        .limit(200);
+    if (sessionsError) throw sessionsError;
+    const ids = (sessions || []).map(s => s.session_id).filter(Boolean);
+    const { data: summaries, error: summariesError } = ids.length ? await supabaseAdmin
         .from("interview_summaries")
-        .select("session_id")
+        .select("session_id,created_at,source_evidence:summary->sourceEvidence")
         .eq("workspace_id", accountScope.workspaceId)
         .eq("owner_id", accountScope.userId)
-        .not("session_id", "is", null)
-        .limit(3000),
-    ]);
+        .in("session_id", ids)
+        .order("created_at", { ascending: false })
+        .limit(1000) : { data: [], error: null };
+    if (summariesError) throw summariesError;
 
-    const haveSummary = new Set((summaries || []).map((s: any) => s.session_id));
+    const latest = new Map<string, any>();
+    for (const row of summaries || []) {
+      if (!latest.has(row.session_id)) latest.set(row.session_id, {
+        ...row, summary: { sourceEvidence: row.source_evidence },
+      });
+    }
+    const haveSummary = new Set((sessions || [])
+      .filter(s => callSummaryIsCurrent(latest.get(s.session_id), s))
+      .map(s => s.session_id));
     const unattended = await recoverScheduledCallInputs(haveSummary, dueForRetry);
     const scheduledIds = new Set(unattended.scheduledSessionIds);
     // Canonical speech activity, not an old browser save, decides whether a

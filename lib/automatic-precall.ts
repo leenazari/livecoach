@@ -31,7 +31,7 @@ const internalPost = (path: string, body: unknown) =>
   });
 
 async function scheduleOne(call: UpcomingCall) {
-  const sessionId = scheduledCallSessionId(call.id);
+  const sessionId = scheduledCallSessionId(call.id, call.scheduled_at);
   if (!sessionId || !validMeetingUrl(call.meeting_url)) {
     return { outcome: "skipped" as const, code: "invalid_meeting_link" };
   }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveRecordScope } from "@/lib/record-scope";
 import { supabaseAdmin } from "@/lib/supabase";
+import { callSummaryIsCurrent } from "@/lib/call-summary-freshness";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,15 +18,16 @@ export async function GET(req: NextRequest) {
       await Promise.all([
         supabaseAdmin
           .from("interview_summaries")
-          .select("summary")
+          .select("summary,created_at")
           .eq("workspace_id", accountScope.workspaceId)
           .eq("owner_id", accountScope.userId)
           .eq("session_id", sessionId)
+          .order("created_at", { ascending: false })
           .limit(1)
           .maybeSingle(),
         supabaseAdmin
           .from("interview_sessions")
-          .select("summary_attempts,summary_error,summary_last_try")
+          .select("session_id,transcript,ended_at,summary_attempts,summary_error,summary_last_try")
           .eq("workspace_id", accountScope.workspaceId)
           .eq("owner_id", accountScope.userId)
           .eq("session_id", sessionId)
@@ -33,7 +35,7 @@ export async function GET(req: NextRequest) {
       ]);
     if (summaryError) throw summaryError;
     if (sessionError) throw sessionError;
-    if (summary?.summary) {
+    if (summary?.summary && callSummaryIsCurrent(summary, session)) {
       return NextResponse.json(
         { state: "ready", summary: summary.summary },
         { headers: { "Cache-Control": "private, no-store" } }

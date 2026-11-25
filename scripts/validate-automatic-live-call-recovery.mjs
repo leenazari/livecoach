@@ -28,14 +28,21 @@ const { validMeetSessionId } = load("lib/transcriber.ts", (name) => {
 });
 const eventA = "46482c8f-182c-46dc-9c25-46ea99fdeb81";
 const eventB = "64883abe-8824-450a-a826-e1dbfa9e163f";
+const eventC = "64883abe-8824-450a-a826-e1dbfa9e163a";
+const scheduledAt = new Date().toISOString();
 let scope = { userId: "lee", workspaceId: "workspace-a" };
 let denied = false, conflict = false, providerCalls = 0;
 const queries = [];
 const rows = {
+  upcoming_calls: [
+    { id: eventA, owner_id: "lee", workspace_id: "workspace-a", scheduled_at: scheduledAt },
+    { id: eventB, owner_id: "kam", workspace_id: "workspace-a", scheduled_at: scheduledAt },
+    { id: eventC, owner_id: "kam", workspace_id: "workspace-a", scheduled_at: scheduledAt },
+  ],
   meet_capture_subscribers: [
     { owner_id: "lee", workspace_id: "workspace-a", session_id: "lc-lee-room", upcoming_id: eventA, capture_id: "capture-a", status: "scheduled" },
     { owner_id: "kam", workspace_id: "workspace-a", session_id: "lc-kam-room", upcoming_id: eventB, capture_id: "capture-b", status: "scheduled" },
-    { owner_id: "kam", workspace_id: "workspace-a", session_id: "lc-kam-shared", upcoming_id: eventA, capture_id: "capture-a", status: "scheduled" },
+    { owner_id: "kam", workspace_id: "workspace-a", session_id: "lc-kam-shared", upcoming_id: eventC, capture_id: "capture-a", status: "scheduled" },
   ],
   meet_bots: [
     { id: "capture-a", workspace_id: "workspace-a", owner_id: "lee", bot_id: "bot-a", bot_name: "Lee's notetaker", status: "active", ended_at: null },
@@ -101,6 +108,16 @@ assert.ok(queries.filter((q) => q.table === "meet_capture_subscribers").every((q
 
 data = await (await route.POST(request("lc-old-browser"))).json();
 assert.equal(data.sessionId, "lc-lee-room", "Return the existing private room rather than rewriting it");
+const beforeStaleRecovery = providerCalls;
+rows.meet_bots[0].ended_at = new Date(Date.parse(scheduledAt) - 86400000).toISOString();
+assert.equal((await route.POST(request("lc-new-occurrence"))).status, 404, "A prior no-show must not be recovered after rescheduling");
+assert.equal((await route.POST(request())).status, 404, "An older open tab cannot resurrect the previous occurrence either");
+rows.meet_bots[0].ended_at = null;
+rows.meet_bots[0].scheduled_join_at = new Date(Date.parse(scheduledAt) - 86400000).toISOString();
+assert.equal((await route.POST(request("lc-new-occurrence"))).status, 404, "An older reservation belongs to the old occurrence");
+rows.meet_bots[0].scheduled_join_at = new Date(Date.parse(scheduledAt) - 120000).toISOString();
+assert.equal(providerCalls, beforeStaleRecovery, "Stale occurrences never fetch or reconnect the old provider capture");
+assert.equal((await route.POST(request("lc-new-browser"))).status, 200, "A valid same-occurrence legacy reservation remains recoverable");
 assert.equal((await route.POST(request("lc-lee-room", eventB))).status, 409, "Conflicting call identity fails closed");
 const callsBeforeIsolation = providerCalls;
 assert.equal((await route.POST(request("lc-kam-room", eventB))).status, 404, "Another user's private call stays inaccessible");
@@ -111,7 +128,7 @@ assert.equal((await route.POST(request())).status, 500);
 assert.equal(providerCalls, callsBeforeIsolation, "Unauthorized lookups never query provider state");
 denied = false;
 scope = { userId: "kam", workspaceId: "workspace-a" };
-assert.equal((await (await route.POST(request("lc-kam-shared"))).json()).sessionId, "lc-kam-shared");
+assert.equal((await (await route.POST(request("lc-kam-shared", eventC))).json()).sessionId, "lc-kam-shared");
 assert.equal(rows.meet_capture_subscribers[2].status, "active", "Explicit shared subscriber keeps its own coaching room");
 
 scope = { userId: "lee", workspaceId: "workspace-a" };

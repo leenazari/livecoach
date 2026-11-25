@@ -3,6 +3,7 @@ import { waitUntil } from "@vercel/functions";
 import { supabaseAdmin } from "@/lib/supabase";
 import { runCallSummaryJob } from "@/lib/call-summary-jobs";
 import { resolveRecordScope } from "@/lib/record-scope";
+import { callSummaryIsCurrent } from "@/lib/call-summary-freshness";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -32,7 +33,7 @@ export async function POST(req: NextRequest) {
     const { data: sess } = await supabaseAdmin
       .from("interview_sessions")
       .select(
-        "session_id, transcript, role, candidate, call_type, company_id, workstream_id, upcoming_id"
+        "session_id, transcript, ended_at, role, competencies, candidate, call_type, company_id, workstream_id, upcoming_id"
       )
       .eq("workspace_id", accountScope.workspaceId)
       .eq("owner_id", accountScope.userId)
@@ -53,14 +54,16 @@ export async function POST(req: NextRequest) {
 
     // Already done (the sweep may have got there first). Say so rather than
     // spending another model call.
-    const { data: existing } = await supabaseAdmin
+    const { data: existing, error: existingError } = await supabaseAdmin
       .from("interview_summaries")
-      .select("id")
+      .select("id,summary,created_at")
       .eq("workspace_id", accountScope.workspaceId)
       .eq("owner_id", accountScope.userId)
       .eq("session_id", sessionId)
-      .limit(1);
-    if (existing && existing.length) {
+      .order("created_at", { ascending: false })
+      .limit(1).maybeSingle();
+    if (existingError) throw existingError;
+    if (callSummaryIsCurrent(existing, sess)) {
       await supabaseAdmin
         .from("interview_sessions")
         .update({ summary_error: null })
@@ -76,7 +79,7 @@ export async function POST(req: NextRequest) {
         transcript,
         role: (sess as any).role || null,
         candidate: (sess as any).candidate || null,
-        competencies: [],
+        competencies: Array.isArray(sess.competencies) ? sess.competencies : [],
         callType: (sess as any).call_type || null,
         sessionId,
         companyId: (sess as any).company_id || null,

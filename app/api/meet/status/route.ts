@@ -145,7 +145,7 @@ async function readStatus(req: NextRequest, resume = false) {
 
     const { data: capture, error: captureError } = await supabaseService
       .from("meet_bots")
-      .select("id,bot_id,bot_name,status,ended_at")
+      .select("id,bot_id,bot_name,status,ended_at,scheduled_join_at")
       .eq("workspace_id", scope.workspaceId)
       .eq("id", subscription.capture_id)
       .maybeSingle();
@@ -158,6 +158,24 @@ async function readStatus(req: NextRequest, resume = false) {
           headers: { "Cache-Control": "private, no-store" },
         }
       );
+    }
+    // Verify the occurrence even for an older tab with an exact legacy room.
+    // Matching a calendar row alone must not resurrect its previous recording.
+    if (upcomingId) {
+      const { data: occurrence, error: occurrenceError } = await supabaseService.from("upcoming_calls")
+        .select("scheduled_at")
+        .eq("workspace_id", scope.workspaceId).eq("owner_id", scope.userId)
+        .eq("id", upcomingId).maybeSingle();
+      if (occurrenceError) throw occurrenceError;
+      const starts = Date.parse(occurrence?.scheduled_at || "");
+      const ended = Date.parse(capture.ended_at || "");
+      const reserved = Date.parse(capture.scheduled_join_at || "");
+      if (!Number.isFinite(starts) ||
+        (Number.isFinite(ended) && ended < starts - 15 * 60000) ||
+        (Number.isFinite(reserved) && Math.abs(reserved - starts) > 15 * 60000)) {
+        return NextResponse.json({ error: "That notetaker belongs to the earlier meeting time. Start this rescheduled call to use its own recording." },
+          { status: 404, headers: { "Cache-Control": "private, no-store" } });
+      }
     }
     const identity = {
       botId: capture.bot_id,
