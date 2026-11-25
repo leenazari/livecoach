@@ -32,6 +32,11 @@ const referencesFor = (draft, source) => {
   return { shareable: draft.shareable, points: draft.points.map(reference), decisions: draft.decisions.map(reference), actions: draft.actions.map(reference) };
 };
 const referenced = referencesFor(proposed, transcript);
+const detailedReferenced = { shareable: true, complete: true,
+  points: referenced.points.map(({ evidenceId, ...p }) => ({ ...p, evidenceIds: [evidenceId] })),
+  decisions: referenced.decisions.map(({ evidenceId, ...p }) => ({ ...p, evidenceIds: [evidenceId] })),
+  actions: referenced.actions.map(({ evidenceId, ...a }) => ({ ...a, requestedBy: null, status: "agreed", evidenceIds: [evidenceId] })),
+};
 assert.deepEqual(plain(content.validateReferencedCallRecap(referenced, transcript, "Lee").actions.map(a => a.owner)), ["Jane", "Lee"]);
 assert.throws(() => content.validateReferencedCallRecap({ ...referenced, points: [{ text: "A claim", evidenceId: 999 }] }, transcript, "Lee"), /RECAP_REVIEW_REQUIRED_EVIDENCE/);
 const unconfirmed = content.validateReferencedCallRecap({ ...referenced, actions: [{ ...referenced.actions[0], owner: "Sharon", due: "Wednesday", evidence: "Sharon: I will send the requirements by Wednesday.", evidenceSpeaker: "Sharon" }] }, transcript, "Lee");
@@ -69,10 +74,46 @@ assert.throws(() => content.validateCallRecap({ ...proposed, points: [{ text: "A
 assert.match(content.callRecapReviewMessage("RECAP_REVIEW_REQUIRED_EVIDENCE"), /quote could not be matched exactly/);
 assert.doesNotMatch(content.callRecapReviewMessage("DATABASE_PRIVATE_SECRET"), /DATABASE_PRIVATE_SECRET/);
 
+const requestSource = "You: Sam, please add an edit details button to the job page.\nSam: Yes, I will add the edit button.\nYou: Please test the edit button on a phone too.\nSam: I will do both by Friday.\nYou: Dana, please investigate keyboard navigation.\nDana: I need to check what is possible.";
+const requestPassages = content.callRecapPassages(requestSource);
+const detailedProposal = { shareable: true, complete: true, points: [], decisions: [], actions: [
+  { task: "Add an edit details button to the job page.", owner: "Sam", requestedBy: "Lee", status: "agreed", due: "Friday", evidenceIds: [1, 2, 4] },
+  { task: "Test the edit button on a phone.", owner: "Sam", requestedBy: "Lee", status: "agreed", due: "Friday", evidenceIds: [3, 4] },
+  { task: "Investigate keyboard navigation.", owner: "Dana", requestedBy: "Lee", status: "requested", due: null, evidenceIds: [5, 6] },
+] };
+const detailedRecap = content.validateDetailedCallRecap(detailedProposal, requestSource, "Lee");
+assert.equal(detailedRecap.version, 2);
+assert.equal(detailedRecap.actions[0].due, "Friday", "A deadline in a later turn is retained with exact evidence");
+assert.equal(detailedRecap.actions[0].requestedBy, "Lee");
+assert.equal(detailedRecap.actions[2].status, "requested", "An unaccepted ask is retained without inventing agreement");
+assert.ok(detailedRecap.actions[0].evidence.includes(requestPassages[0].text));
+assert.ok(detailedRecap.actions[0].evidence.includes(requestPassages[3].text));
+const forgedDetail = content.validateDetailedCallRecap({ ...detailedProposal, actions: [{ ...detailedProposal.actions[0], owner: "Sharon", requestedBy: "Kamm", due: "Wednesday", evidence: "Sharon agrees", evidenceSpeaker: "Sharon" }] }, requestSource, "Lee");
+assert.equal(forgedDetail.actions[0].owner, null); assert.equal(forgedDetail.actions[0].requestedBy, null); assert.equal(forgedDetail.actions[0].due, null);
+assert.throws(() => content.validateDetailedCallRecap({ ...detailedProposal, complete: false }, requestSource, "Lee"), /COVERAGE/);
+for (const ids of [[], [1, 1], [999], [1.2], ["1"], Array.from({ length: 11 }, (_, i) => i + 1)])
+  assert.throws(() => content.validateDetailedCallRecap({ ...detailedProposal, actions: [{ ...detailedProposal.actions[0], evidenceIds: ids }] }, requestSource, "Lee"), /EVIDENCE/);
+assert.throws(() => content.validateDetailedCallRecap({ ...detailedProposal, actions: [{ ...detailedProposal.actions[0], status: "done" }] }, requestSource, "Lee"), /ACTION/);
+const manySource = Array.from({ length: 35 }, (_, i) => `You: Sam, please implement numbered requirement ${i + 1} for the job page.`).join("\n");
+const manyProposal = { shareable: true, complete: true, points: [], decisions: [], actions: Array.from({ length: 35 }, (_, i) => ({ task: `Implement numbered requirement ${i + 1} for the job page.`, owner: "Sam", requestedBy: "Lee", status: "requested", due: null, evidenceIds: [i + 1] })) };
+const manyRecap = content.validateDetailedCallRecap(manyProposal, manySource, "Lee");
+assert.equal(manyRecap.actions.length, 35);
+const detailEmail = content.renderCallRecap(manyRecap, "2026-11-25T10:30:00Z");
+assert.match(detailEmail.text, /requirement 35/); assert.match(detailEmail.text, /No deadline stated/);
+assert.doesNotMatch(detailEmail.text, /short recap/); assert.doesNotMatch(detailEmail.html, /evidenceIds|sourceIds|You:/);
+assert.equal(content.callRecapPassages("You: Ask Sharon to update her payroll details.").length, 0, "Private administrative asides are not forwarded");
+assert.deepEqual(plain(content.detailedRecapReviewInput(detailedRecap, detailedProposal, requestSource, "Lee").passages), plain(requestPassages), "Coverage review receives all safe source passages, not just selected evidence");
+const actionNormalizer = compile("lib/call-summary-actions.ts");
+assert.equal(actionNormalizer.normalizeCallSummaryActions(manyProposal.actions.map(a => ({ owner: a.owner, text: a.task })), owner => owner).length, 35, "CRM action register does not silently slice at twelve");
+assert.equal(actionNormalizer.normalizeCallSummaryActions([{ owner: "", text: "Confirm the owner" }], () => "Sam")[0].owner, "Unassigned");
+const summarySource = read("app/api/interview/summary/route.ts");
+assert.match(summarySource, /normalizeCallSummaryActions\(summary.actions/);
+assert.doesNotMatch(summarySource, /part.slice\(0, 4000\)|0 to 12 items/);
+
 const workspace = "00000000-0000-4000-8000-000000000001", lee = "00000000-0000-4000-8000-000000000002", cam = "00000000-0000-4000-8000-000000000003";
 const callId = "00000000-0000-4000-8000-000000000004";
 let scope = { userId: lee, workspaceId: workspace };
-let rows, sent, modelCalls, gate, hold, sendFailure, failSentSave, failRead, providerHook, modelResponse;
+let rows, sent, modelCalls, gate, hold, sendFailure, failSentSave, failRead, providerHook, modelResponse, missingCoverage;
 const enabledSince = "2026-11-23T14:00:00.000Z";
 function reset() {
   scope = { userId: lee, workspaceId: workspace };
@@ -83,7 +124,7 @@ function reset() {
     interview_sessions: [{ session_id: "s1", workspace_id: workspace, owner_id: lee, transcript, started_at: "2026-11-23T15:15:00Z", ended_at: "2026-11-23T16:15:00Z", created_at: "2026-11-23T15:00:00Z", brief: "PRIVATE_PREP" }],
     call_recap_emails: [{ id: "receipt", call_id: callId, session_id: "s1", workspace_id: workspace, owner_id: lee, status: "queued", attempts: 0, lease_until: null, created_at: "2026-11-23T16:16:00Z" }],
   };
-  sent = []; modelCalls = 0; gate = null; hold = false; sendFailure = false; failSentSave = false; failRead = null; providerHook = null; modelResponse = null;
+  sent = []; modelCalls = 0; gate = null; hold = false; sendFailure = false; failSentSave = false; failRead = null; providerHook = null; modelResponse = null; missingCoverage = false;
 }
 const db = { from(table) {
   let filters = [], orders = [], limit = Infinity, action = "read", payload, single = false;
@@ -131,9 +172,9 @@ const deps = {
   "@/lib/openai": { OPENAI_MODEL_LIVE: "test-model", openai: { messages: { create: async p => {
     modelCalls++; assert.doesNotMatch(JSON.stringify(p), /PRIVATE_PREP|PRIVATE_NEGOTIATION_LIMIT/);
     if (gate) await gate;
-    const review = p.response_format?.name === "shareable_call_recap_review";
+    const review = p.response_format?.name === "detailed_call_recap_review";
     if (!review) {
-      assert.equal(p.response_format.name, "shareable_call_recap");
+      assert.equal(p.response_format.name, "detailed_call_recap");
       assert.equal(p.response_format.strict, true);
       if (modelResponse) return modelResponse;
     }
@@ -143,8 +184,8 @@ const deps = {
       assert.equal(input.transcript, undefined, "Source text is passed once, as bounded references");
     }
     const reviewedRecap = review ? JSON.parse(p.messages[0].content).recap : null;
-    const verdict = review ? Object.fromEntries(["points", "decisions", "actions"].map(section => [section, hold ? [] : reviewedRecap[section].map((_, index) => index)])) : null;
-    return { content: [{ type: "text", text: JSON.stringify(review ? verdict : referenced) }], usage: {} };
+    const verdict = review ? { ...Object.fromEntries(["points", "decisions", "actions"].map(section => [section, hold ? [] : reviewedRecap[section].map((_, index) => index)])), coverageComplete: !missingCoverage } : null;
+    return { content: [{ type: "text", text: JSON.stringify(review ? verdict : detailedReferenced) }], usage: {} };
   } } } },
   "@/lib/usage": { logModelUsage: async () => {} }, "@/lib/call-recap": content,
 };
@@ -171,19 +212,25 @@ assert.equal((await worker.getCallRecapPreference()).enabled, false, "Never inhe
 reset(); hold = true;
 await worker.processCallRecapEmail("receipt"); assert.equal(sent.length, 0); assert.equal(rows.call_recap_emails[0].status, "needs_review");
 assert.match(rows.call_recap_emails[0].last_error, /privacy check could not approve/);
+reset(); missingCoverage = true;
+await worker.processCallRecapEmail("receipt"); assert.equal(sent.length, 0); assert.equal(rows.call_recap_emails[0].status, "needs_review");
+assert.match(rows.call_recap_emails[0].last_error, /did not account for all the requests/);
+assert.equal(rows.call_recap_emails[0].recap.version, 0, "Incomplete action registers never become sendable");
 reset(); modelResponse = { content: [{ type: "text", text: "{truncated" }], stop_reason: "max_tokens" };
 await worker.processCallRecapEmail("receipt"); assert.equal(sent.length, 0); assert.equal(modelCalls, 1);
 assert.match(rows.call_recap_emails[0].last_error, /not returned in a complete readable format/);
-reset(); modelResponse = { content: [{ type: "text", text: JSON.stringify({ ...referenced, actions: [{ ...referenced.actions[0], due: "Wednesday" }] }) }] };
+reset(); modelResponse = { content: [{ type: "text", text: JSON.stringify({ ...detailedReferenced, actions: [{ ...detailedReferenced.actions[0], due: "Wednesday" }] }) }] };
 await worker.processCallRecapEmail("receipt"); assert.equal(sent.length, 1); assert.equal(modelCalls, 2);
 assert.doesNotMatch(sent[0].text, /Wednesday/);
 assert.equal(rows.call_recap_emails[0].recap.actions[0].due, null);
 reset(); rows.call_recap_emails[0].source_hash = require("node:crypto").createHash("sha256").update(transcript).digest("hex");
-rows.call_recap_emails[0].recap = { version: 0, proposed: referenced };
+rows.call_recap_emails[0].recap = { version: 0, generation: content.CALL_RECAP_GENERATION, proposed: detailedReferenced };
 await worker.processCallRecapEmail("receipt"); assert.equal(sent.length, 1); assert.equal(modelCalls, 1, "Unchanged unapproved proposals are revalidated and reviewed, never re-extracted or sent unchecked");
 reset(); hold = true;
 await worker.processCallRecapEmail("receipt"); assert.equal(sent.length, 0);
 assert.equal(rows.call_recap_emails[0].recap.version, 0, "A failed privacy review never promotes a proposal to sendable content");
+reset(); rows.call_recap_emails[0].status = "sent"; rows.call_recap_emails[0].recap = recap;
+await worker.processCallRecapEmail("receipt"); assert.equal(modelCalls, 0); assert.equal(sent.length, 0, "Existing v1 deliveries are never resent after the generator upgrade");
 reset(); sendFailure = true;
 await worker.processCallRecapEmail("receipt"); await worker.processCallRecapEmail("receipt");
 assert.equal(sent.length, 1); assert.equal(rows.call_recap_emails[0].status, "uncertain");
