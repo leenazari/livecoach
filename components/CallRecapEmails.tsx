@@ -38,7 +38,7 @@ export default function CallRecapEmails({ callId }: { callId?: string }) {
         {saving ? "Saving…" : !state ? "Loading preference…" : state.enabled ? "On · turn off" : "Off · turn on"}
       </button>}
     </div>
-    <p className="mt-2 text-sm leading-relaxed text-muted">A practical recap with individual requests and next actions grouped by person, including stated deadlines. Requested work is distinguished from agreed commitments. Emailed only to your own connected mailbox after new calls finish, usually within five minutes of the summary being saved. Review before forwarding.</p>
+    <p className="mt-2 text-sm leading-relaxed text-muted">Attendees, brief context and action bullets by person, with your own priorities first. Traffic lights highlight stated timing — red for urgent or due now, amber for the next seven days, green for later. Unclear timing stays uncoloured. Emailed only to your own connected mailbox after new calls finish, usually within five minutes of the summary being saved.</p>
     {!callId && <p className="mt-2 text-sm text-muted">Private notes, coaching scores and internal CRM context are excluded. Prospects are never emailed automatically. This preference applies only to your account.</p>}
     {error && <p role="alert" className="mt-3 text-sm text-rust">{error}</p>}
     {state && !state.enabled && <p className="mt-3 text-sm text-muted">Automatic recap emails are off for your account. {callId && <Link href="/settings#call-recap-emails" className="text-amber underline">Manage in Settings</Link>}</p>}

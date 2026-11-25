@@ -16,7 +16,8 @@ function compile(path, deps = {}) {
     { exports, Date, JSON, Intl, console, URL, Response, setTimeout, clearTimeout, require: n => n === "server-only" ? {} : n in deps ? deps[n] : require(n) });
   return exports;
 }
-const content = compile("lib/call-recap.ts");
+const priorities = compile("lib/call-recap-priority.ts");
+const content = compile("lib/call-recap.ts", { "./call-recap-priority": priorities });
 const transcript = "You: We discussed a five minute demo for the admissions team.\nJane: I will send the requirements by Friday.\nYou: I will send the pilot outline tomorrow.\nJane: We agreed to start with one department.";
 const proposed = { shareable: true,
   points: [{ text: "We discussed a short demonstration for the admissions team.", evidence: "You: We discussed a five minute demo for the admissions team." }],
@@ -99,8 +100,44 @@ const manyProposal = { shareable: true, complete: true, points: [], decisions: [
 const manyRecap = content.validateDetailedCallRecap(manyProposal, manySource, "Lee");
 assert.equal(manyRecap.actions.length, 35);
 const detailEmail = content.renderCallRecap(manyRecap, "2026-11-25T10:30:00Z");
-assert.match(detailEmail.text, /requirement 35/); assert.match(detailEmail.text, /No deadline stated/);
+assert.match(detailEmail.text, /requirement 35/); assert.doesNotMatch(detailEmail.text, /No deadline stated|Requested by|Here is the meeting recap|Private asides are excluded|Reconstructed from/);
 assert.doesNotMatch(detailEmail.text, /short recap/); assert.doesNotMatch(detailEmail.html, /evidenceIds|sourceIds|You:/);
+assert.deepEqual(plain(content.callRecapParticipants(`${requestSource}\nCandidate: Demonstration sample`, "Lee")), ["Lee", "Sam", "Dana"]);
+assert.deepEqual(plain(content.callRecapParticipants("Sam: I will test the page today.", "Lee")), ["Sam"], "The recipient is not invented as an attendee when absent from the source");
+const meetingAt = "2026-11-25T10:30:00Z", sendAt = "2026-11-25T11:45:00Z";
+assert.equal(priorities.callRecapPriority("today", meetingAt, sendAt).colour, "red");
+assert.equal(priorities.callRecapPriority("ASAP", meetingAt, sendAt).label, "Urgent");
+assert.equal(priorities.callRecapPriority("Friday", meetingAt, sendAt).colour, "amber");
+assert.equal(priorities.callRecapPriority("Thursday 26 November 2026, 10 am Europe/London", meetingAt, sendAt).colour, "amber");
+assert.equal(priorities.callRecapPriority("10 December 2026", meetingAt, sendAt).colour, "green");
+assert.equal(priorities.callRecapPriority("2026-11-24", meetingAt, sendAt).label, "Overdue");
+assert.equal(priorities.callRecapPriority("tomorrow", meetingAt, "2026-11-27T12:00:00Z").label, "Overdue", "A retry does not shift a promised deadline forward");
+assert.equal(priorities.callRecapPriority("today", "2026-07-01T22:30:00Z", "2026-07-01T23:30:00Z").label, "Overdue", "London calendar dates apply over BST midnight");
+for (const value of [null, "when possible", "next week", "maybe Friday", "not urgent", "12/11", "31 November 2026", "Friday or Monday"])
+  assert.equal(priorities.callRecapPriority(value, meetingAt, sendAt), null, `Uncertain timing stays uncoloured — ${value}`);
+const priorityRecap = { ...detailedRecap, points: [{ text: "Review the job-page experience and agree the changes needed.", evidence: requestSource }], actions: [
+  { ...detailedRecap.actions[2], due: "today" },
+  { ...detailedRecap.actions[0], task: "Plan the later release", due: "10 December 2026" },
+  { ...detailedRecap.actions[1], task: "Test the urgent fix", due: "today" },
+  { ...detailedRecap.actions[1], task: "Check the next release", due: "Friday" },
+  { ...detailedRecap.actions[1], task: "Discuss an undated improvement", due: null },
+  { ...detailedRecap.actions[1], owner: null, task: "Confirm the remaining owner", due: null },
+] };
+const samEmail = content.renderCallRecap(priorityRecap, meetingAt, { recipientName: "Sam", now: sendAt });
+const danaEmail = content.renderCallRecap(priorityRecap, meetingAt, { recipientName: "Dana", now: sendAt });
+assert.match(samEmail.text, /Attendees\nLee, Sam, Dana/);
+assert.ok(samEmail.text.indexOf("Context\n") < samEmail.text.indexOf("Your priorities · Sam"));
+assert.ok(samEmail.text.indexOf("Your priorities · Sam") < samEmail.text.indexOf("\n\nDana\n"));
+assert.ok(danaEmail.text.indexOf("Your priorities · Dana") < danaEmail.text.indexOf("\n\nSam\n"));
+assert.ok(samEmail.text.indexOf("Test the urgent fix") < samEmail.text.indexOf("Check the next release"));
+assert.ok(samEmail.text.indexOf("Check the next release") < samEmail.text.indexOf("Plan the later release"));
+assert.ok(samEmail.text.indexOf("Plan the later release") < samEmail.text.indexOf("Discuss an undated improvement"));
+assert.equal((samEmail.html.match(/<li /g) || []).length, 6);
+for (const label of ["Due today", "Upcoming", "Later"]) assert.match(samEmail.html, new RegExp(label));
+for (const colour of ["#b42318", "#8a5700", "#16704a"]) assert.ok(samEmail.html.includes(colour));
+assert.doesNotMatch(content.renderCallRecap(priorityRecap, meetingAt, { recipientName: "Nobody" }).text, /Your priorities/);
+const noActions = content.renderCallRecap({ ...priorityRecap, actions: [] }, meetingAt);
+assert.match(noActions.text, /Review the job-page experience/); assert.doesNotMatch(noActions.text, /Your priorities|Agreed —/);
 assert.equal(content.callRecapPassages("You: Ask Sharon to update her payroll details.").length, 0, "Private administrative asides are not forwarded");
 assert.deepEqual(plain(content.detailedRecapReviewInput(detailedRecap, detailedProposal, requestSource, "Lee").passages), plain(requestPassages), "Coverage review receives all safe source passages, not just selected evidence");
 const actionNormalizer = compile("lib/call-summary-actions.ts");
@@ -172,7 +209,7 @@ const deps = {
   } },
   "@/lib/mail": { connectedMailProvider: async ownerId => { assert.equal(ownerId, scope.userId); if (providerHook) providerHook(); return { provider: "google", email: ownerId === lee ? "lee@example.test" : "cam@example.test" }; },
     sendConnectedMail: async (message, ownerId) => { sent.push({ ...plain(message), ownerId }); if (sendFailure) throw new Error("network timeout"); return { ok: true, id: "provider-message" }; } },
-  "@/lib/speakers": { loadHostIdentityForUser: async (owner, work) => { assert.equal(owner, scope.userId); assert.equal(work, scope.workspaceId); return { name: "Lee" }; } },
+  "@/lib/speakers": { loadHostIdentityForUser: async (owner, work) => { assert.equal(owner, scope.userId); assert.equal(work, scope.workspaceId); return { name: owner === lee ? "Lee" : "Cam" }; } },
   "@/lib/openai": { OPENAI_MODEL_LIVE: "test-model", openai: { messages: { create: async p => {
     modelCalls++; assert.doesNotMatch(JSON.stringify(p), /PRIVATE_PREP|PRIVATE_NEGOTIATION_LIMIT/);
     if (gate) await gate;
@@ -207,6 +244,26 @@ assert.equal((await worker.getCallRecapReceipts()).length, 0);
 await worker.processCallRecapEmail("receipt"); assert.equal(sent.length, 0);
 await worker.saveCallRecapPreference(true);
 await assert.rejects(worker.processCallRecapEmail("receipt"), /ACCESS_DENIED/);
+reset();
+const camSource = "You: I will check the booking flow today.\nPat: I will test the page by Friday.";
+const camRecap = content.validateDetailedCallRecap({ shareable: true, complete: true, points: [], decisions: [], actions: [
+  { task: "Test the page", owner: "Pat", requestedBy: null, status: "agreed", due: "Friday", evidenceIds: [2] },
+  { task: "Check the booking flow", owner: "Cam", requestedBy: null, status: "agreed", due: "today", evidenceIds: [1] },
+] }, camSource, "Cam");
+const camCall = "00000000-0000-4000-8000-000000000005";
+rows.app_config.push({ ...rows.app_config[0], owner_id: cam });
+rows.interview_summaries.push({ ...rows.interview_summaries[0], id: camCall, session_id: "cam-session", owner_id: cam });
+rows.interview_sessions.push({ ...rows.interview_sessions[0], session_id: "cam-session", owner_id: cam, transcript: camSource });
+rows.call_recap_emails.push({ ...rows.call_recap_emails[0], id: "cam-receipt", call_id: camCall, session_id: "cam-session", owner_id: cam, status: "ready", recap: camRecap,
+  source_hash: require("node:crypto").createHash("sha256").update(camSource).digest("hex") });
+scope.userId = cam;
+await worker.processCallRecapEmail("cam-receipt");
+assert.equal(sent.length, 1); assert.equal(sent[0].to, "cam@example.test");
+assert.match(sent[0].text, /Attendees\nCam, Pat/); assert.match(sent[0].text, /Your priorities · Cam/);
+assert.ok(sent[0].text.indexOf("Your priorities · Cam") < sent[0].text.indexOf("\n\nPat\n"));
+assert.doesNotMatch(sent[0].text, /Lee|Jane|pilot outline/);
+assert.equal(modelCalls, 0, "New presentation does not reprocess unchanged reviewed calls");
+assert.equal(rows.call_recap_emails[0].status, "queued", "The other account's receipt remains untouched");
 reset(); scope.workspaceId = "different";
 await assert.rejects(worker.getCallRecapPreference(), /ACCESS_DENIED/);
 reset(); rows.workspace_members[0].status = "suspended";
