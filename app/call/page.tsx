@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { refreshCallPrepContext } from "@/lib/call-prep-refresh";
+import PreCallBrief from "@/components/PreCallBrief";
 import MeetingLeadPicker, { type MeetingLeadState } from "@/components/MeetingLeadPicker";
 import MeetingLaunchLink from "@/components/MeetingLaunchLink";
 import { foldDictationEvent } from "@/lib/dictation";
@@ -3771,6 +3772,10 @@ export default function CallPage() {
 
       {meetingLead && !callLive && (
         <MeetingLeadPicker lead={meetingLead} disabled={intentLoading || prepping || leadSaving} onConfirm={confirmMeetingLead} />
+      )}
+
+      {upcomingId && callEntryState === "ready" && !callLive && !ended && (
+        <PreCallBrief key={`${upcomingId}:${meetingLead?.leadSelectionVersion || ""}`} callId={upcomingId} />
       )}
 
       {setupCollapsed ? (
