@@ -1,4 +1,6 @@
 // Browser-safe projection. These are existing CRM records, not a mailbox sync.
+export const LEAD_EMAIL_MESSAGE_LIMIT = 12;
+export type LeadEmailContact = { id: string; name: string; email: string };
 export type RecordedCompanyEmail = {
   id: string;
   companyId: string;
@@ -9,6 +11,8 @@ export type RecordedCompanyEmail = {
   source: 'Outreach' | 'Email assistant' | 'Recorded reply' | 'Connected mailbox';
   text?: string;
   truncated?: boolean;
+  textUnavailable?: boolean;
+  threadId?: string;
 };
 export type RecordedCompanyEmailHistory = {
   messages: RecordedCompanyEmail[];
@@ -16,6 +20,9 @@ export type RecordedCompanyEmailHistory = {
   mailbox?: string;
   matchedEmail?: string;
   searchScope?: string;
+  contacts?: LeadEmailContact[];
+  selectedContactId?: string;
+  contactRequired?: boolean;
 };
 
 export function recordedEmailDate(value: string): string {

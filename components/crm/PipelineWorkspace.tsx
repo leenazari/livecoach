@@ -35,6 +35,7 @@ import {
   summarizePipelineStages,
 } from "@/lib/pipeline-entry";
 import MetricDrilldown from "@/components/crm/MetricDrilldown";
+import CompanyEmailHistory from "@/components/crm/CompanyEmailHistory";
 import {
   pipelineStageDropId,
   pipelineStageFromDropId,
@@ -377,6 +378,7 @@ function KanbanDealCard({
   disabled,
   saving,
   onOpen,
+  onEmails,
 }: {
   row: Row;
   ownerLabel: string;
@@ -384,6 +386,7 @@ function KanbanDealCard({
   disabled: boolean;
   saving: boolean;
   onOpen: () => void;
+  onEmails: () => void;
 }) {
   const {
     attributes,
@@ -440,6 +443,7 @@ function KanbanDealCard({
         <span>{canEdit ? "Edit opportunity" : "Evidence · view only"}</span>
         <span className="shrink-0 text-muted">Open</span>
       </button>
+      <button type="button" onClick={onEmails} aria-haspopup="dialog" aria-label={`Read latest 12 emails for ${row.company}`} className="mt-2 min-h-10 w-full rounded-lg border border-sky/40 px-3 py-2 text-left text-sm text-sky hover:bg-sky/10">Email thread · Latest 12</button>
     </article>
   );
 }
@@ -451,6 +455,7 @@ function KanbanStageColumn({
   ownerName,
   canEditDeal,
   onOpen,
+  onEmails,
 }: {
   stage: { key: string; label: string };
   members: Row[];
@@ -458,6 +463,7 @@ function KanbanStageColumn({
   ownerName: (row: Row) => string;
   canEditDeal: (row: Row) => boolean;
   onOpen: (id: string) => void;
+  onEmails: (id: string) => void;
 }) {
   const { isOver, setNodeRef } = useDroppable({
     id: pipelineStageDropId(stage.key),
@@ -492,6 +498,7 @@ function KanbanStageColumn({
             disabled={Boolean(busy)}
             saving={busy === `stage:${row.id}`}
             onOpen={() => onOpen(row.id)}
+            onEmails={() => onEmails(row.id)}
           />
         )) : (
           <p className={`flex min-h-[128px] items-center justify-center rounded-lg border border-dashed p-3 text-center text-xs ${isOver ? "border-amber/70 text-amber" : "border-edge text-muted"}`}>
@@ -556,6 +563,8 @@ export default function PipelineWorkspace(props: Props) {
     "priority" | "newest" | "oldest" | "activity_newest" | "activity_oldest"
   >("priority");
   const [editorRowId, setEditorRowId] = useState("");
+  const [editorTab, setEditorTab] = useState<'details' | 'emails'>('details');
+  const openDeal = (id: string, tab: 'details' | 'emails' = 'details') => { setEditorRowId(id); setEditorTab(tab); };
   const [activeDragId, setActiveDragId] = useState("");
   const [dragStatus, setDragStatus] = useState<DragStatus>(null);
   const sensors = useSensors(
@@ -699,9 +708,10 @@ export default function PipelineWorkspace(props: Props) {
       });
   }, [onStageMove, rows]);
   const editorButton = (row: Row) => (
+    <div>
     <button
       type="button"
-      onClick={() => setEditorRowId(row.id)}
+      onClick={() => openDeal(row.id)}
       aria-haspopup="dialog"
       className="mt-2 flex min-h-10 w-full items-center justify-between gap-3 rounded-lg border border-edge bg-panel/60 px-3 py-2 text-left font-mono text-[0.52rem] uppercase tracking-wider text-amber transition hover:border-amber/55 hover:bg-amber/[0.08]"
     >
@@ -714,6 +724,8 @@ export default function PipelineWorkspace(props: Props) {
             : "Open"}
       </span>
     </button>
+    <button type="button" onClick={() => openDeal(row.id, 'emails')} aria-haspopup="dialog" aria-label={`Read latest 12 emails for ${row.company}`} className="mt-2 min-h-10 w-full rounded-lg border border-sky/40 px-3 py-2 text-left text-sm text-sky hover:bg-sky/10">Email thread · Latest 12</button>
+    </div>
   );
 
   return (
@@ -882,7 +894,8 @@ export default function PipelineWorkspace(props: Props) {
                 busy={props.busy}
                 ownerName={ownerName}
                 canEditDeal={canEditDeal}
-                onOpen={setEditorRowId}
+                onOpen={id => openDeal(id)}
+                onEmails={id => openDeal(id, 'emails')}
               />
             ))}
           </div>
@@ -915,7 +928,7 @@ export default function PipelineWorkspace(props: Props) {
             <header className="flex shrink-0 items-start justify-between gap-3 border-b border-edge bg-panel/95 px-4 py-3 backdrop-blur sm:px-6 sm:py-4">
               <div className="min-w-0">
                 <p className="font-mono text-[0.52rem] uppercase tracking-widest text-amber">
-                  Edit opportunity
+                  {editorTab === 'emails' ? 'Email thread' : 'Edit opportunity'}
                 </p>
                 <h3
                   id={`deal-workspace-${editorRow.id}`}
@@ -931,7 +944,7 @@ export default function PipelineWorkspace(props: Props) {
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                {canEditDeal(editorRow) ? (
+                {editorTab === 'details' && canEditDeal(editorRow) ? (
                   <button
                     type="button"
                     onClick={() => props.onSave(editorRow)}
@@ -952,8 +965,14 @@ export default function PipelineWorkspace(props: Props) {
                 </button>
               </div>
             </header>
+            <div className="flex shrink-0 gap-2 border-b border-edge px-4 py-2 sm:px-6" aria-label="Deal sections">
+              <button type="button" aria-pressed={editorTab === 'details'} onClick={() => setEditorTab('details')} className={`min-h-10 rounded-lg px-3 text-sm ${editorTab === 'details' ? 'bg-amber/15 text-amber' : 'text-muted'}`}>Deal details</button>
+              <button type="button" aria-pressed={editorTab === 'emails'} onClick={() => setEditorTab('emails')} className={`min-h-10 rounded-lg px-3 text-sm ${editorTab === 'emails' ? 'bg-sky/15 text-sky' : 'text-muted'}`}>Email thread · Latest 12</button>
+            </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-3 pb-8 sm:p-6">
-              <DealDetails key={editorRow.id} {...props} row={editorRow} />
+              {editorTab === 'emails'
+                ? <CompanyEmailHistory key={`${currentUser}:${editorRow.company_id}`} companyId={editorRow.company_id} initiallyOpen initialSource="mailbox" embedded />
+                : <DealDetails key={editorRow.id} {...props} row={editorRow} />}
             </div>
           </section>
         </div>,

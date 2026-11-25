@@ -1,7 +1,7 @@
 import 'server-only';
 import { supabaseAdmin } from '@/lib/supabase';
 import { salesLeadScope } from '@/lib/sales-lead-service';
-import type { RecordedCompanyEmail, RecordedCompanyEmailHistory } from '@/lib/recorded-company-emails';
+import { LEAD_EMAIL_MESSAGE_LIMIT, type RecordedCompanyEmail, type RecordedCompanyEmailHistory } from '@/lib/recorded-company-emails';
 
 type BaseRow = { id: string; workspace_id: string };
 type OutreachRow = BaseRow & { sender_user_id: string; status: string; subject: string; recipient_email: string; sent_at: string; gmail_message_id: string | null; body_text?: string; outreach_prospects: { crm_company_id: string; workspace_id: string } };
@@ -21,7 +21,7 @@ export async function loadRecordedCompanyEmails(companyIds: string[], includeTex
   const ids = [...new Set(companyIds)];
   if (!ids.length) return { messages: [], limited: false };
   if (ids.length > 25) throw new Error('email_history_page_too_large');
-  const limit = includeText ? 30 : 100;
+  const limit = includeText ? LEAD_EMAIL_MESSAGE_LIMIT + 1 : 100;
   const signal = AbortSignal.timeout(includeText ? 10000 : 2000);
   const body = includeText ? ',body_text' : '';
   const results = await Promise.all([
@@ -65,5 +65,5 @@ export async function loadRecordedCompanyEmails(companyIds: string[], includeTex
     add(row, { id: `reply-${row.id}`, companyId: row.company_id, direction: 'received', at: timestamp(metadata.receivedAt) || timestamp(row.created_at), subject: text(metadata.subject) || text(row.title) || 'No subject', correspondent: text(metadata.senderEmail) || text(metadata.senderName), source: 'Recorded reply' }, row.content, row.source_ref ? `reply-${row.source_ref}` : `reply-${row.id}`);
   }
   messages.sort((a, b) => b.at.localeCompare(a.at) || a.id.localeCompare(b.id));
-  return { messages, limited: results.some(result => (result.data?.length || 0) >= limit) };
+  return { messages: includeText ? messages.slice(0, LEAD_EMAIL_MESSAGE_LIMIT) : messages, limited: (includeText && messages.length > LEAD_EMAIL_MESSAGE_LIMIT) || results.some(result => (result.data?.length || 0) >= limit) };
 }
