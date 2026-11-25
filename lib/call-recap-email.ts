@@ -7,7 +7,7 @@ import { connectedMailProvider, sendConnectedMail } from "@/lib/mail";
 import { loadHostIdentityForUser } from "@/lib/speakers";
 import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
-import { CALL_RECAP_KEY, CALL_RECAP_CURSOR_KEY, CALL_RECAP_GENERATION, CALL_RECAP_DETAIL_INSTRUCTIONS, CALL_RECAP_DETAIL_FORMAT, CALL_RECAP_DETAIL_REVIEW_FORMAT, CALL_RECAP_DETAIL_REVIEW_INSTRUCTIONS, detailedRecapReviewInput, selectReviewedCallRecap, callRecapReviewMessage, callRecapPassages, recapPreference, validateDetailedCallRecap, renderCallRecap } from "@/lib/call-recap";
+import { CALL_RECAP_KEY, CALL_RECAP_CURSOR_KEY, CALL_RECAP_GENERATION, CALL_RECAP_DETAIL_INSTRUCTIONS, CALL_RECAP_DETAIL_FORMAT, CALL_RECAP_DETAIL_REVIEW_FORMAT, CALL_RECAP_DETAIL_REVIEW_INSTRUCTIONS, detailedRecapReviewInput, selectReviewedCallRecap, callRecapReviewMessage, callRecapPassages, callRecapParticipants, recapPreference, validateDetailedCallRecap, renderCallRecap } from "@/lib/call-recap";
 
 const receiptQuery = (scope: RecordScope) => supabaseService.from("call_recap_emails").select("*").eq("workspace_id", scope.workspaceId).eq("owner_id", scope.userId);
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -139,9 +139,9 @@ export async function processCallRecapEmail(id: string) {
     const transcript = String(session.transcript || "").trim();
     if (transcript.length < 30 || transcript.length > 180000) throw new Error("RECAP_REVIEW_REQUIRED_LIMITS");
     const sourceHash = hash(transcript);
+    const host = await loadHostIdentityForUser(scope.userId, scope.workspaceId);
     let recap = row.source_hash === sourceHash && row.recap?.version === CALL_RECAP_GENERATION ? row.recap : null;
     if (!recap) {
-      const host = await loadHostIdentityForUser(scope.userId, scope.workspaceId);
       let parsed: any = row.source_hash === sourceHash && row.recap?.version === 0 && row.recap?.generation === CALL_RECAP_GENERATION ? row.recap.proposed : null;
       if (!parsed) {
         const response = await openai.messages.create({ model: OPENAI_MODEL_LIVE, max_tokens: 14000, temperature: 0,
@@ -188,7 +188,9 @@ export async function processCallRecapEmail(id: string) {
     const connection = await connectedMailProvider(scope.userId);
     const recipient = String(connection.email || "").trim().toLowerCase();
     if (!connection.provider || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) throw new Error("RECAP_MAILBOX_UNAVAILABLE");
-    const message = renderCallRecap(recap, session.started_at || session.created_at);
+    // Formatting is universal, but priority order is the exact recipient's.
+    // Refresh attendees from this verified source even when using cached v2 data.
+    const message = renderCallRecap({ ...recap, participants: callRecapParticipants(transcript, host.name) }, session.started_at || session.created_at, { recipientName: host.name });
     // Durable send barrier. Even if the process dies, the next run only reports
     // an uncertain outcome. It never retries the external side effect.
     await update({ status: "sending", recipient, last_error: null });

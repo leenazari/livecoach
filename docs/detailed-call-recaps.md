@@ -5,6 +5,24 @@ The version 2 email recap preserves each distinct safe business request and
 commitment, grouped by the recipient or responsible person. It distinguishes
 requested work from agreed commitments and retains only evidenced deadlines.
 
+## Default email layout for every user
+
+- Meeting date, the named attendees evidenced by the call, and a short purpose
+  or context sentence come first. Generic speaker labels are not people.
+- Action bullets are grouped by person. The receiving account's own actions
+  appear first as Your priorities. Unconfirmed owners remain last.
+- Traffic lights are presentation only. Red means explicitly urgent, due today
+  or overdue, amber means due within seven days, and green means a later stated
+  deadline. Labels accompany colour. Unclear timing stays uncoloured.
+- Dates use Europe/London. Relative wording is anchored to the meeting date,
+  not a retry date. No task deadline, priority or assignment is written back.
+- There is no reconstruction/process preamble or repeated no-deadline text.
+  Requests remain distinct from agreements. Email opt-in and recipients are
+  unchanged, and this format does not replay delivered emails.
+
+Formatting uses cached reviewed data and the exact recipient identity. It adds
+no model request. Unknown timing is not treated as low priority or completed.
+
 ## Grounding and privacy
 
 - Extraction receives only safe numbered passages from the exact owner's saved
