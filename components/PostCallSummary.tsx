@@ -1,6 +1,7 @@
 "use client";
 import CallActionPack from "@/components/CallActionPack";
 import GetCallCoaching from "@/components/GetCallCoaching";
+import CallActionRegister from "@/components/CallActionRegister";
 
 import { useEffect, useRef, useState } from "react";
 import { crmFetch } from "@/lib/crm";
@@ -54,81 +55,6 @@ function CompBar({ score }: { score: number }) {
       <span className="w-9 shrink-0 text-right font-mono text-[0.7rem] tabular-nums text-muted">
         {p}%
       </span>
-    </div>
-  );
-}
-
-// WHO IS DOING WHAT. One block per person, so the answer to "what did I commit
-// to and what did they" is a glance rather than a read. Owners arrive already
-// collapsed onto one name per human (lib/speakers.ts), so the same person
-// cannot appear twice under different spellings.
-//
-// You come first, Unassigned goes last. Unassigned exists on purpose: an
-// action pinned to the wrong person is worse than one that admits nobody
-// claimed it.
-function OwnerActions({
-  actions,
-  hostName,
-}: {
-  actions?: { owner: string; text: string }[];
-  hostName?: string;
-}) {
-  if (!actions || actions.length === 0) return null;
-
-  const byOwner = new Map<string, string[]>();
-  for (const a of actions) {
-    if (!a || typeof a.text !== "string" || !a.text.trim()) continue;
-    const owner = (a.owner || "Unassigned").trim() || "Unassigned";
-    const list = byOwner.get(owner) || [];
-    list.push(a.text.trim());
-    byOwner.set(owner, list);
-  }
-  if (!byOwner.size) return null;
-
-  const owners = Array.from(byOwner.keys()).sort((x, y) => {
-    if (hostName) {
-      if (x === hostName) return -1;
-      if (y === hostName) return 1;
-    }
-    if (x === "Unassigned") return 1;
-    if (y === "Unassigned") return -1;
-    return x.localeCompare(y);
-  });
-
-  return (
-    <div className="rounded-xl border border-edge bg-panel/40 px-5 py-4">
-      <h3 className="mb-3 font-mono text-[0.66rem] uppercase tracking-[0.22em] text-bone/70">
-        Who is doing what
-      </h3>
-      <div className="flex flex-col gap-3.5">
-        {owners.map((owner) => {
-          const mine = !!hostName && owner === hostName;
-          const none = owner === "Unassigned";
-          return (
-            <div key={owner}>
-              <p
-                className={`mb-1 font-mono text-[0.6rem] uppercase tracking-[0.18em] ${
-                  mine ? "text-amber" : none ? "text-muted" : "text-sky"
-                }`}
-              >
-                {owner}
-                {mine ? " (you)" : ""}
-              </p>
-              <ul className="flex flex-col gap-1">
-                {(byOwner.get(owner) || []).map((t, i) => (
-                  <li
-                    key={i}
-                    className="flex gap-2 font-sans text-[0.84rem] leading-snug text-bone/85"
-                  >
-                    <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-muted" />
-                    {t}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          );
-        })}
-      </div>
     </div>
   );
 }
@@ -797,7 +723,7 @@ export default function PostCallSummary({
 
           {view.actions && view.actions.length > 0 ? (
             <div className="space-y-3">
-              <OwnerActions
+              <CallActionRegister
                 actions={view.actions}
                 hostName={view.hostName || hostName}
               />

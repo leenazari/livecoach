@@ -37,6 +37,11 @@ all asks, attribution and timing. Failed or truncated condensation falls back to
 the full source part rather than silently discarding its tail. The existing
 summary time budget and durable retry path remain in place.
 
+The saved-call screen and live debrief use the same read-only action register.
+They render every canonical action, grouped by owner, before any prepared action
+pack. Unconfirmed owners remain explicit. This view makes no requests, creates
+no tasks and does not treat a recorded request as completed or agreed.
+
 ## Validation
 
 `validate:call-recap-emails` covers a 35-item register, multiple source turns,
@@ -45,6 +50,8 @@ privacy filtering, incomplete coverage, cached proposals, legacy sent receipts,
 account isolation, removal during generation, concurrency, uncertain sends,
 Postgres RLS and the actual preference UI. `validate:call-summary-resilience`
 checks the existing durable summary path. No database migration is needed.
+The actual action-register component is also tested with 49 items, unconfirmed
+owners, call changes, malformed legacy values and escaped text.
 
 Generative completeness still requires transcript coverage review. The tests do
 not claim that a synthetic fixture proves every future model output is perfect.

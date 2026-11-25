@@ -109,6 +109,10 @@ assert.equal(actionNormalizer.normalizeCallSummaryActions([{ owner: "", text: "C
 const summarySource = read("app/api/interview/summary/route.ts");
 assert.match(summarySource, /normalizeCallSummaryActions\(summary.actions/);
 assert.doesNotMatch(summarySource, /part.slice\(0, 4000\)|0 to 12 items/);
+const savedCallPage = read("app/crm/calls/[id]/page.tsx");
+assert.match(savedCallPage, /<CallActionRegister actions=\{s.actions\} hostName=\{s.hostName\}/);
+assert.ok(savedCallPage.indexOf("<CallActionRegister") < savedCallPage.indexOf("<CallActionPack"), "The full canonical list is visible before prepared drafts");
+assert.match(read("components/PostCallSummary.tsx"), /<CallActionRegister/);
 
 const workspace = "00000000-0000-4000-8000-000000000001", lee = "00000000-0000-4000-8000-000000000002", cam = "00000000-0000-4000-8000-000000000003";
 const callId = "00000000-0000-4000-8000-000000000004";
@@ -325,6 +329,26 @@ assert.match(document.body.textContent, /Delivery needs checking/); assert.match
 assert.equal(uiPuts, 0, "Opening Settings is read-only");
 await act(async () => { document.querySelector("button").click(); });
 assert.equal(uiPuts, 1); assert.match(document.body.textContent, /Off · turn on/);
+const Register = compile("components/CallActionRegister.tsx").default;
+const displayedActions = Array.from({ length: 49 }, (_, index) => ({ owner: index < 30 ? "Sam" : index < 40 ? "Lee" : "Unassigned", text: `Requested requirement ${index + 1}`, privateSource: "PRIVATE_SOURCE_NOT_FOR_DISPLAY" }));
+await act(async () => root.render(React.createElement(Register, { actions: displayedActions, hostName: "Lee" })));
+assert.equal(document.querySelectorAll("li").length, 49, "All recorded actions render without a preview cap");
+assert.match(document.body.textContent, /49 recorded items/);
+assert.match(document.body.textContent, /Requested requirement 49/);
+assert.doesNotMatch(document.body.textContent, /PRIVATE_SOURCE_NOT_FOR_DISPLAY/);
+assert.match(document.querySelector("h4").textContent, /Lee \(you\)/);
+assert.match([...document.querySelectorAll("h4")].at(-1).textContent, /Owner to confirm/);
+assert.equal(document.querySelectorAll("button, input").length, 0, "Viewing recorded requests cannot create or complete tasks");
+await act(async () => root.render(React.createElement(Register, { actions: [{ owner: "Cam", text: "A separate call <script>not executable</script>" }], hostName: "Cam" })));
+assert.equal(document.querySelectorAll("li").length, 1);
+assert.equal(document.querySelectorAll("script").length, 0);
+assert.doesNotMatch(document.body.textContent, /Requested requirement|Lee|Sam/,
+  "Changing the call renders only its supplied canonical actions, without stale rows");
+await act(async () => root.render(React.createElement(Register, { actions: [null, { owner: 42, text: "Owner unknown" }, { text: "" }] })));
+assert.equal(document.querySelectorAll("li").length, 1);
+assert.match(document.body.textContent, /Owner to confirm/);
+await act(async () => root.render(React.createElement(Register, { actions: null })));
+assert.equal(document.querySelectorAll("section").length, 0);
 await act(async () => root.unmount()); dom.window.close();
 assert.ok(JSON.parse(read("vercel.json")).crons.some(c => c.path === "/api/cron/call-recap-emails" && c.schedule === "*/5 * * * *"));
 console.log("Call recap grounding, privacy, recipient isolation, opt-in, concurrency, retries, uncertain sends, RLS and actual settings UI passed");
