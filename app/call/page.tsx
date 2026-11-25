@@ -5379,7 +5379,7 @@ export default function CallPage() {
               type="button"
               onClick={() => setCueFull(true)}
               title="Expand cues to full screen (wall of cues)"
-              className="shrink-0 rounded-full border border-edge px-3 py-1.5 font-mono text-[0.58rem] uppercase tracking-wider text-bone transition hover:border-amber/60"
+              className="lc-golden-action shrink-0 rounded-full border border-amber bg-amber px-3 py-1.5 font-mono text-[0.58rem] uppercase tracking-wider text-ink transition hover:bg-amberglow"
             >
               {"\u2922"} Expand
             </button>

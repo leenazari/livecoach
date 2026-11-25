@@ -381,7 +381,7 @@ function NavMenuInner({
                   active ? "text-amber" : "text-muted"
                 }`}
               >
-                <span className={center ? "lc-golden-action -mt-3 flex h-11 w-11 items-center justify-center rounded-full border border-amber/60 bg-amber/20 text-[1.1rem] leading-none text-amber" : "text-[1.05rem] leading-none"}>
+                <span className={center ? `-mt-3 flex h-11 w-11 items-center justify-center rounded-full border leading-none ${active ? "lc-golden-action border-amber bg-amber text-ink" : "border-amber/60 bg-transparent text-amber"}` : "text-[1.05rem] leading-none"}>
                   <MobileNavIcon label={t.label} />
                 </span>
                 {t.label}
