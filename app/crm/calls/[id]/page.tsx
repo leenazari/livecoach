@@ -11,6 +11,7 @@ import CallActionPack from "@/components/CallActionPack";
 import GetCallCoaching from "@/components/GetCallCoaching";
 import MatrixRain from "@/components/MatrixRain";
 import CallRecapEmails from "@/components/CallRecapEmails";
+import CallActionRegister from "@/components/CallActionRegister";
 
 type Call = {
   id: string;
@@ -291,6 +292,7 @@ export default function CallDetailPage() {
             )}
           </div>
 
+          <CallActionRegister actions={s.actions} hostName={s.hostName} />
           {call.session_id && <CallRecapEmails callId={call.id} />}
           {call.session_id && <CallActionPack key={`actions:${call.id}`} callId={call.id} />}
           {call.session_id && <GetCallCoaching key={call.id} callId={call.id} sessionId={call.session_id} />}
