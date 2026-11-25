@@ -712,6 +712,7 @@ export async function recentMicrosoftMessages(
   const domain = query.match(/@([a-z0-9.-]+\.[a-z]{2,})/i)?.[1]?.toLowerCase() || "";
   const combinesAddressesWithOr =
     /\bOR\b/i.test(query) && (fromEmails.length > 0 || toEmails.length > 0);
+  const exactAddresses = (value: string) => (value.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi) || []).map(email => email.toLowerCase());
   return (Array.isArray(data.value) ? data.value : [])
     .filter((message: any) => !options?.exactContactEmail || message.isDraft === false)
     .map(graphMessage)
@@ -720,6 +721,7 @@ export async function recentMicrosoftMessages(
       if (cutoff && new Date(message.date).getTime() < cutoff) return false;
       const from = message.from.toLowerCase();
       const recipients = `${message.to} ${message.cc}`.toLowerCase();
+      if (options?.exactContactEmail && !exactAddresses(`${from} ${recipients}`).includes(options.exactContactEmail.trim().toLowerCase())) return false;
       const matchesFrom = fromEmails.some((email) => from.includes(email));
       const matchesTo = toEmails.some((email) => recipients.includes(email));
       if (combinesAddressesWithOr) {
@@ -733,6 +735,7 @@ export async function recentMicrosoftMessages(
       if (domain && !haystack.includes(`@${domain}`)) return false;
       return true;
     })
+    .sort((a: GmailMsg, b: GmailMsg) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id))
     .slice(0, Math.min(Math.max(max, 1), 25));
 }
 
@@ -753,16 +756,21 @@ const htmlToText = (value: string): string =>
 export async function freshMicrosoftMessageText(
   id: string,
   max = 6000,
-  ownerId?: string
+  ownerId?: string,
+  options?: { strict?: boolean; signal?: AbortSignal }
 ): Promise<string> {
   if (!id) return "";
   const response = await graphFetch(
-    `/me/messages/${encodeURIComponent(id)}?$select=body,bodyPreview`,
-    {},
+    `/me/messages/${encodeURIComponent(id)}?$select=id,body,bodyPreview`,
+    { signal: options?.signal },
     ownerId
   );
-  if (!response?.ok) return "";
+  if (!response?.ok) {
+    if (options?.strict) throw new Error('mailbox_search_unavailable');
+    return "";
+  }
   const data = await response.json();
+  if (options?.strict && (data?.id !== id || !data?.body)) throw new Error('mailbox_search_unavailable');
   const raw = data?.body?.contentType === "html"
     ? htmlToText(String(data?.body?.content || ""))
     : String(data?.body?.content || data?.bodyPreview || "");

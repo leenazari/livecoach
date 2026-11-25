@@ -369,11 +369,17 @@ export function freshReplyOnly(value: unknown, max = 6000): string {
 
 // Fetches ONE Gmail message, never its thread. The caller pays for only the
 // fresh message body, with quoted history stripped and a hard character cap.
-export async function freshMessageText(id: string, max = 6000, ownerId?: string): Promise<string> {
+export async function freshMessageText(id: string, max = 6000, ownerId?: string, options?: { strict?: boolean; signal?: AbortSignal }): Promise<string> {
   const token = await getAccessToken(false, ownerId);
-  if (!token || !id) return "";
-  const message = await api(`/messages/${encodeURIComponent(id)}?format=full`, token, ownerId);
-  if (!message?.payload) return "";
+  if (!token || !id) {
+    if (options?.strict) throw new Error('mailbox_search_unavailable');
+    return "";
+  }
+  const message = await api(`/messages/${encodeURIComponent(id)}?format=full`, token, ownerId, options);
+  if (!message?.payload || (options?.strict && message.id !== id)) {
+    if (options?.strict) throw new Error('mailbox_search_unavailable');
+    return "";
+  }
   const plain = mimeText(message.payload, "text/plain");
   const html = plain ? "" : mimeText(message.payload, "text/html");
   const text = plain || (html ? stripHtml(html) : decodeBase64Url(message.payload.body?.data));

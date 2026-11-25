@@ -24,13 +24,16 @@ if (qaDir) {
 }
 function snapshot(name) {
   if (!qaDir) return;
-  writeFileSync(path.join(qaDir, `${name}.html`), `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>${qaCss}</style></head><body class="bg-ink text-bone font-sans">${document.getElementById('root').innerHTML}</body></html>`);
+  writeFileSync(path.join(qaDir, `${name}.html`), `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>${qaCss}</style></head><body class="bg-ink text-bone font-sans">${document.body.innerHTML}</body></html>`);
 }
 const COMPANY = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const OTHER = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const emailProjection = load('lib/recorded-company-emails.ts');
 let actor = { userId: 'kam', workspaceId: 'w', role: 'owner' }, failTable = '', reads = [];
 const base = { workspace_id: 'w', owner_id: 'kam', company_id: COMPANY };
 const db = {
+  companies: [{ id: COMPANY, workspace_id: 'w', owner_id: 'lee', is_confidential: false, stage: 'prospect' }],
+  contacts: [],
   workspace_members: ['kam', 'sharon', 'lee'].map(user_id => ({ workspace_id: 'w', user_id, role: user_id === 'lee' ? 'owner' : 'sales', status: 'active' })),
   outreach_messages: [
     { ...base, id: 'sent', sender_user_id: 'kam', status: 'sent', subject: 'Demo follow-up', recipient_email: 'buyer@example.test', sent_at: '2026-11-23T12:00:00Z', gmail_message_id: 'provider-one', body_text: 'Thanks for the demo. <script>alert(1)</script>', outreach_prospects: { workspace_id: 'w', crm_company_id: COMPANY } },
@@ -69,7 +72,7 @@ class Query {
   eq(key, value) { this.filters.push(row => field(row, key) === value); return this; }
   in(key, values) { this.filters.push(row => values.includes(field(row, key))); return this; }
   not(key, op, value) { assert.equal(op, 'is'); assert.equal(value, null); this.filters.push(row => row[key] != null); return this; }
-  order(key, options) { this.sortKey = key; this.ascending = options.ascending; return this; }
+  order(key, options = { ascending: true }) { this.sortKey = key; this.ascending = options.ascending; return this; }
   limit(value) { assert.ok(value <= 100); this.max = value; return this; }
   abortSignal(signal) { assert.ok(signal instanceof AbortSignal); return this; }
   returns() { return this; }
@@ -85,7 +88,7 @@ const dbClient = { from: table => new Query(table) };
 const json = (data, options) => ({ data, ...options });
 const blocker = { crmBlockerPayload: value => ({ error: value.title, blocker: value }) };
 const scope = load('lib/sales-lead-service.ts', { '@/lib/supabase': { supabaseService: dbClient }, '@/lib/request-scope': { requireRequestScope: () => actor }, '@/lib/crm-blocker': blocker, 'next/server': { NextResponse: { json } } });
-const server = load('lib/recorded-company-emails-server.ts', { '@/lib/supabase': { supabaseAdmin: dbClient }, '@/lib/sales-lead-service': scope });
+const server = load('lib/recorded-company-emails-server.ts', { '@/lib/supabase': { supabaseAdmin: dbClient }, '@/lib/sales-lead-service': scope, '@/lib/recorded-company-emails': emailProjection });
 let history = await server.loadRecordedCompanyEmails([COMPANY], true);
 assert.deepEqual(history.messages.map(message => message.id), ['reply-reply', 'assistant-assistant', 'outreach-sent']);
 assert.doesNotMatch(JSON.stringify(history), /HIDDEN_|workspace_id|owner_id|source_ref|provider-one/);
@@ -118,6 +121,7 @@ failTable = '';
 const original = db.client_context;
 db.client_context = Array.from({ length: 101 }, (_, i) => ({ ...ownReply, id: `r${i}`, source_ref: `google:r${i}`, content: 'x'.repeat(8100) }));
 history = await server.loadRecordedCompanyEmails([COMPANY], true);
+assert.equal(history.messages.length, 12, 'Detail view is bounded to the latest 12 actual saved messages');
 assert.equal(history.limited, true); assert.equal(history.messages.find(message => message.direction === 'received').text.length, 8000);
 assert.equal(history.messages.find(message => message.direction === 'received').truncated, true);
 db.client_context = original;
@@ -148,13 +152,15 @@ failTable = '';
 db.workspace_members[0].status = 'removed'; assert.equal((await get(COMPANY)).status, 403); db.workspace_members[0].status = 'active';
 
 // Connected mailbox lookup is explicit, address-exact and always uses the actor.
-let canonicalEmail = 'buyer@example.test', mailboxProvider = 'google', assignedVisible = true;
+let canonicalEmail = 'buyer@example.test', mailboxProvider = 'google', assignedVisible = true, contactAccess = true;
 let mailboxOwnerCalls = [];
+let providerFixture;
 const mailMessage = { id: 'mail-one', date: '2026-11-24T12:00:00Z', from: 'Kamm <kam@example.test>', to: 'Buyer <buyer@example.test>', cc: '', subject: 'Current demo', snippet: 'Here is the demo', labelIds: ['SENT'] };
 const providerLookup = async (query, max, owner, options) => {
   mailboxOwnerCalls.push(owner); assert.equal(owner, actor.userId); assert.equal(max, 12);
-  assert.equal(query, '(from:buyer@example.test OR to:buyer@example.test)'); assert.equal(options.strict, true);
+  assert.equal(query, '(from:buyer@example.test OR to:buyer@example.test) -in:drafts'); assert.equal(options.strict, true);
   if (mailboxProvider === 'microsoft') assert.equal(options.exactContactEmail, 'buyer@example.test');
+  if (providerFixture) return providerFixture;
   return [mailMessage,
     { ...mailMessage, id: 'received', from: 'Buyer <buyer@example.test>', to: 'kam@example.test', labelIds: ['INBOX'] },
     { ...mailMessage, id: 'wrong', to: 'not-buyer@example.test' },
@@ -163,26 +169,91 @@ const providerLookup = async (query, max, owner, options) => {
     { ...mailMessage, id: 'unrelated-cc', from: 'other@example.test', labelIds: ['INBOX'] },
   ];
 };
+const contacts = load('lib/lead-email-contacts.ts', {
+  '@/lib/sales-lead-service': scope, '@/lib/supabase': { supabaseAdmin: dbClient },
+  '@/lib/assigned-client-access': { loadAssignedClientAccess: async id => contactAccess && id === COMPANY ? { mode: actor.userId === 'lee' ? 'owner' : 'shared_sales' } : null },
+  '@/lib/client-sharing-policy': load('lib/client-sharing-policy.ts'),
+  '@/lib/assigned-new-leads-server': { loadAssignedNewLeads: async id => ({ leads: assignedVisible ? [{ id, email: canonicalEmail, contactName: 'Buyer' }] : [] }) },
+});
+let bodyCalls = [], failBody = false;
+const bodyLookup = async (id, max, owner, options) => {
+  bodyCalls.push({ id, owner }); assert.equal(max, 8000); assert.equal(owner, actor.userId); assert.equal(options.strict, true); assert.ok(options.signal instanceof AbortSignal);
+  if (failBody) throw new Error('BODY_PRIVATE_PROVIDER_ERROR');
+  return `Complete message text for ${id}, not a snippet.`;
+};
 const mailbox = load('lib/lead-mailbox-history.ts', {
   '@/lib/sales-lead-service': scope,
-  '@/lib/assigned-new-leads-server': { loadAssignedNewLeads: async id => ({ leads: assignedVisible ? [{ id, email: canonicalEmail }] : [] }) },
+  '@/lib/lead-email-contacts': contacts, '@/lib/own-account-emails': { loadOwnAccountEmails: async () => new Set(['kam@example.test', 'own-alias@example.test']) },
   '@/lib/mail': { connectedMailProvider: async owner => { assert.equal(owner, actor.userId); return { provider: mailboxProvider, email: 'kam@example.test' }; } },
-  '@/lib/gmail': { recentMessages: providerLookup }, '@/lib/microsoft': { recentMicrosoftMessages: providerLookup },
+  '@/lib/gmail': { recentMessages: providerLookup, freshMessageText: bodyLookup }, '@/lib/microsoft': { recentMicrosoftMessages: providerLookup, freshMicrosoftMessageText: bodyLookup },
+  '@/lib/recorded-company-emails': emailProjection,
 });
 for (const provider of ['google', 'microsoft']) {
   mailboxProvider = provider;
   const found = await mailbox.loadLeadMailboxHistory(COMPANY);
   assert.deepEqual(found.messages.map(message => message.id), [`mailbox-${provider}-mail-one`, `mailbox-${provider}-received`]);
   assert.ok(found.limited); assert.equal(found.matchedEmail, canonicalEmail);
+  assert.ok(found.messages.every(message => message.text.startsWith('Complete message text') && !message.truncated));
 }
 actor.userId = 'sharon'; await mailbox.loadLeadMailboxHistory(COMPANY); assert.equal(mailboxOwnerCalls.at(-1), 'sharon'); actor.userId = 'kam';
-assignedVisible = false; const callsBeforeDenied = mailboxOwnerCalls.length;
-await assert.rejects(mailbox.loadLeadMailboxHistory(COMPANY), /sales_lead_access/); assert.equal(mailboxOwnerCalls.length, callsBeforeDenied); assignedVisible = true;
-for (const email of ['', 'kam@example.test', 'buyer@example.test OR from:private@example.test']) {
+contactAccess = false; const callsBeforeDenied = mailboxOwnerCalls.length;
+await assert.rejects(mailbox.loadLeadMailboxHistory(COMPANY), /sales_lead_access/); assert.equal(mailboxOwnerCalls.length, callsBeforeDenied); contactAccess = true;
+for (const email of ['', 'kam@example.test', 'own-alias@example.test', 'buyer@example.test OR from:private@example.test']) {
   canonicalEmail = email; await assert.rejects(mailbox.loadLeadMailboxHistory(COMPANY), /mailbox_contact_missing/);
 }
 canonicalEmail = 'buyer@example.test'; mailboxProvider = null;
 await assert.rejects(mailbox.loadLeadMailboxHistory(COMPANY), /mailbox_not_connected/); mailboxProvider = 'google';
+failBody = true;
+const unavailableBody = await mailbox.loadLeadMailboxHistory(COMPANY);
+assert.ok(unavailableBody.messages.every(message => message.textUnavailable && message.truncated));
+assert.doesNotMatch(JSON.stringify(unavailableBody), /BODY_PRIVATE_PROVIDER_ERROR/);
+failBody = false;
+providerFixture = Array.from({ length: 18 }, (_, index) => ({ ...mailMessage, id: `long-${index}`, date: new Date(Date.UTC(2026, 10, index + 1)).toISOString() }));
+providerFixture.push(providerFixture[17]); // Duplicate provider row never takes a slot.
+bodyCalls = [];
+const lastTwelve = await mailbox.loadLeadMailboxHistory(COMPANY);
+assert.equal(lastTwelve.messages.length, 12); assert.equal(bodyCalls.length, 12);
+assert.deepEqual(lastTwelve.messages.map(message => message.id), Array.from({ length: 12 }, (_, i) => `mailbox-google-long-${17 - i}`));
+providerFixture = []; bodyCalls = [];
+assert.equal((await mailbox.loadLeadMailboxHistory(COMPANY)).messages.length, 0); assert.equal(bodyCalls.length, 0);
+providerFixture = undefined;
+// Ordinary pipeline contacts work without any import. Hidden colleague contacts
+// and another company's people are never offered, even if they share a name.
+assignedVisible = false;
+const ownContact = { id: 'contact-a', company_id: COMPANY, workspace_id: 'w', owner_id: 'kam', email: 'buyer@example.test', name: 'Buyer' };
+db.contacts = [ownContact,
+  { ...ownContact, id: 'hidden-lee', owner_id: 'lee', email: 'private@example.test' },
+  { ...ownContact, id: 'hidden-company', company_id: OTHER },
+  { ...ownContact, id: 'hidden-workspace', workspace_id: 'foreign' },
+  { ...ownContact, id: 'duplicate-email', email: ' BUYER@example.test ' },
+];
+assert.deepEqual(await contacts.loadLeadEmailContacts(COMPANY), [{ id: 'contact-a', name: 'Buyer', email: 'buyer@example.test' }]);
+assert.equal((await mailbox.loadLeadMailboxHistory(COMPANY)).selectedContactId, 'contact-a');
+db.contacts.push({ ...ownContact, id: 'contact-b', email: 'colleague@example.test', name: 'Colleague' });
+const beforeChoice = mailboxOwnerCalls.length;
+const choice = await mailbox.loadLeadMailboxHistory(COMPANY);
+assert.equal(choice.contactRequired, true); assert.equal(choice.messages.length, 0); assert.equal(choice.contacts.length, 2);
+assert.equal(mailboxOwnerCalls.length, beforeChoice, 'An ambiguous company must not silently pick a person');
+assert.equal((await mailbox.loadLeadMailboxHistory(COMPANY, 'contact-a')).matchedEmail, 'buyer@example.test');
+for (const invalid of ['hidden-lee', 'hidden-company', 'hidden-workspace', 'buyer@example.test OR from:private@example.test']) {
+  await assert.rejects(mailbox.loadLeadMailboxHistory(COMPANY, invalid), /mailbox_contact_unavailable/);
+}
+for (const classification of ['investor', 'internal', 'personal', 'strategic partner']) {
+  db.companies[0].classification = classification;
+  await assert.rejects(mailbox.loadLeadMailboxHistory(COMPANY), /sales_lead_access/);
+}
+db.companies[0].classification = ''; db.companies[0].is_confidential = true;
+await assert.rejects(mailbox.loadLeadMailboxHistory(COMPANY), /sales_lead_access/);
+db.companies[0].is_confidential = false;
+for (const status of ['removed', 'suspended', 'onboarding']) {
+  db.workspace_members[0].status = status;
+  await assert.rejects(mailbox.loadLeadMailboxHistory(COMPANY), /sales_lead_access/);
+}
+db.workspace_members[0].status = 'active'; actor.workspaceId = 'foreign';
+await assert.rejects(mailbox.loadLeadMailboxHistory(COMPANY), /sales_lead_access/); actor.workspaceId = 'w';
+actor.userId = 'sharon';
+assert.deepEqual(await contacts.loadLeadEmailContacts(COMPANY), []);
+actor.userId = 'kam'; db.contacts = []; assignedVisible = true;
 
 // Strict provider reads distinguish empty results from failure. Existing callers
 // keep their previous best-effort contract unless they opt into strict reads.
@@ -223,6 +294,26 @@ assert.equal(graphSearch.has('$orderby'), false);
 assert.match(graphSearch.get('$select'), /isDraft/);
 assert.deepEqual(graphResults.map(message => message.id), ['matching']);
 await assert.rejects(microsoft.recentMicrosoftMessages('', 12, 'kam', { strict: true, exactContactEmail: 'buyer@example.test OR from:private@example.test' }), /mailbox_contact_missing/);
+globalThis.fetch = async () => Response.json({ value: [
+  { id: 'not-exact', isDraft: false, receivedDateTime: '2026-11-25T12:00:00Z', from: { emailAddress: { address: 'not-buyer@example.test' } } },
+  ...Array.from({ length: 18 }, (_, index) => ({ id: `ms-${index}`, isDraft: false, receivedDateTime: new Date(Date.UTC(2026, 10, index + 1)).toISOString(), from: { emailAddress: { address: 'buyer@example.test' } } })),
+] });
+assert.deepEqual((await microsoft.recentMicrosoftMessages('(from:buyer@example.test OR to:buyer@example.test) -in:drafts', 12, 'kam', { strict: true, exactContactEmail: 'buyer@example.test' })).map(message => message.id), Array.from({ length: 12 }, (_, i) => `ms-${17 - i}`));
+// Strict body reads distinguish unavailable content from legitimate empty text,
+// strip quoted replies and never return HTML to the browser.
+globalThis.fetch = async url => String(url).includes('gmail.googleapis.com')
+  ? Response.json({ id: 'body-1', payload: { mimeType: 'text/plain', body: { data: Buffer.from('Yes, Friday works.\nOn Tuesday Buyer wrote:\nOlder quoted text').toString('base64url') } } })
+  : Response.json({ id: 'body-1', body: { contentType: 'html', content: '<p>Yes, Friday works.</p>\nOn Tuesday Buyer wrote:\nOlder quoted text' } });
+for (const bodyReader of [google.freshMessageText, microsoft.freshMicrosoftMessageText]) {
+  const full = await bodyReader('body-1', 8000, 'kam', { strict: true, signal: AbortSignal.timeout(2000) });
+  assert.match(full, /Friday works/); assert.doesNotMatch(full, /Older quoted|<p>/);
+  await assert.rejects(bodyReader('wrong-id', 8000, 'kam', { strict: true }), /mailbox_search_unavailable/);
+}
+globalThis.fetch = async () => new Response('', { status: 503 });
+for (const bodyReader of [google.freshMessageText, microsoft.freshMicrosoftMessageText]) {
+  await assert.rejects(bodyReader('body-1', 8000, 'kam', { strict: true }), /mailbox_search_unavailable/);
+  assert.equal(await bodyReader('body-1', 8000, 'kam'), '', 'Existing best-effort callers stay compatible');
+}
 globalThis.fetch = originalFetch;
 
 const projection = load('lib/assigned-new-leads.ts');
@@ -238,15 +329,14 @@ assert.equal(search.matchesPipelineSearch({ company: 'Other', title: 'Demo', pri
 // UI uses the actual history component. No message read until explicitly opened.
 const dom = new JSDOM('<div id="root"></div>', { url: 'https://crm.test/crm/new-leads?lead_query=Example&lead_page=3' });
 Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
-const emailProjection = load('lib/recorded-company-emails.ts');
-let requests = [], emailFailure = false, delayEmail = false, resolveEmail;
+let requests = [], emailFailure = false, delayEmail = false, resolveEmail, mailboxUiFixture;
 const lead = { id: COMPANY, companyName: 'Example', website: '', ownerName: 'Kamm', assignedTo: 'kam', status: 'contacted', sourceDate: '', stage: 'Prospect', email: 'buyer@example.test', contactName: 'Buyer', holdingPageUrl: 'https://demo.test/a', sourceStatus: 'contacted', activity: {}, campaign: 'C1', emailHistory: 'Sent 20 November' };
 const fetch = async (url, init) => {
   assert.ok(!init?.method || init.method === 'GET', 'Navigation/history must not create, draft or send anything'); requests.push(url);
   if (url.includes('/emails')) {
     if (delayEmail) return new Promise(resolve => { resolveEmail = resolve; });
     if (emailFailure) throw new Error('Saved email source unavailable');
-    if (url.includes('source=mailbox')) return { messages: [{ ...history.messages[0], id: 'from-mailbox', companyId: COMPANY, subject: 'Own mailbox match', text: 'My current correspondence', source: 'Connected mailbox' }], limited: true, mailbox: 'kam@example.test', matchedEmail: 'buyer@example.test' };
+    if (url.includes('source=mailbox')) return mailboxUiFixture || { messages: [{ ...history.messages[0], id: 'from-mailbox', companyId: COMPANY, subject: 'Own mailbox match', text: 'My current correspondence', source: 'Connected mailbox' }], limited: true, mailbox: 'kam@example.test', matchedEmail: 'buyer@example.test' };
     return server.loadRecordedCompanyEmails([COMPANY], true);
   }
   if (url.endsWith('/access')) return { canReview: false };
@@ -313,6 +403,7 @@ const Pipeline = load('components/crm/PipelineWorkspace.tsx', {
   'next/link': link, '@/lib/crm': { crmFetch: fetch }, '@/lib/opportunity-fields': load('lib/opportunity-fields.ts'),
   '@/lib/opportunity-owner-filter': load('lib/opportunity-owner-filter.ts'), '@/lib/pipeline-search': search,
   '@/lib/pipeline-entry': pipelineEntry, '@/components/crm/MetricDrilldown': load('components/crm/MetricDrilldown.tsx', { 'next/link': link }),
+  '@/components/crm/CompanyEmailHistory': { default: Email },
   '@/lib/pipeline-stage-drag': load('lib/pipeline-stage-drag.ts', { '@/lib/pipeline-entry': pipelineEntry }),
 }).default;
 const row = { id: 'deal-a', company_id: COMPANY, company: 'Example Engineering', title: 'Adam inbound pilot', pipeline_stage: 'discovery', win_outlook: 'possible', created_at: '2026-11-23T10:00:00Z', value: 5000, nextAction: 'Book a demo', next_action: 'Book a demo', assigned_to_user_id: 'kam', owner_id: 'kam', risks: [], outlookQuestions: [], priorityReasons: [], status: 'open' };
@@ -324,6 +415,12 @@ await act(async () => root.render(React.createElement(Pipeline, props)));
 assert.equal(document.querySelector('[aria-label="Search deals"]').value, 'Engineering');
 assert.match(document.body.textContent, /Example Engineering/); assert.doesNotMatch(document.body.textContent, /Café Software|HIDDEN PRIVATE DEAL/);
 snapshot('pipeline');
+delayEmail = false;
+const beforeTableRead = requests.filter(url => url.includes('/emails')).length;
+await act(async () => document.querySelector(`[aria-label="Read latest 12 emails for ${row.company}"]`).click());
+assert.equal(requests.filter(url => url.includes('/emails')).length, beforeTableRead + 1, 'Table email action opens this deal directly');
+assert.match(document.querySelector('[role="dialog"]').textContent, /My current correspondence/);
+await act(async () => document.querySelector('[aria-label="Close deal workspace"]').click());
 await act(async () => button('kanban').click());
 assert.match(document.body.textContent, /Example Engineering/); assert.doesNotMatch(document.body.textContent, /Café Software|HIDDEN PRIVATE DEAL/);
 snapshot('pipeline-board');
@@ -332,5 +429,31 @@ assert.match(document.body.textContent, /Café Software/); assert.doesNotMatch(d
 assert.equal(new URLSearchParams(window.location.search).has('pipeline_search'), false);
 await act(async () => { window.history.pushState({}, '', '/crm/revenue?pipeline_search=missing'); window.dispatchEvent(new dom.window.PopStateEvent('popstate')); });
 assert.ok([...document.querySelectorAll('[role="status"]')].some(element => /No deals match this search/.test(element.textContent)));
+await act(async () => button('Clear search').click());
+delayEmail = false;
+mailboxUiFixture = { ...lastTwelve, messages: lastTwelve.messages.map((message, index) => ({ ...message, subject: `Demo conversation ${12 - index}`, text: `Message ${12 - index}. Thanks for discussing the demo.\n${'Here is the agreed next step. '.repeat(3)}` })) };
+const beforePipelineEmails = requests.filter(url => url.includes('/emails')).length;
+assert.equal(document.querySelectorAll('[aria-label="Email messages"]').length, 0, 'Pipeline rows never fetch all mailboxes in advance');
+await act(async () => document.querySelector(`[aria-label="Read latest 12 emails for ${row.company}"]`).click());
+assert.equal(requests.filter(url => url.includes('/emails')).length, beforePipelineEmails + 1);
+assert.equal(document.querySelectorAll('[aria-label="Email messages"] article').length, 12);
+assert.match(document.querySelector('[role="dialog"]').textContent, /12 messages shown · Newest first/);
+assert.equal(document.querySelector('[aria-label="Email messages"] article h4').textContent, 'Demo conversation 12');
+assert.ok(!button('Save changes'), 'Reading a thread offers no misleading save or send action');
+snapshot('pipeline-email-history');
+await act(async () => button('Deal details').click());
+assert.ok(button('Save changes'));
+await act(async () => button('Email thread · Latest 12')?.click());
+// Explicitly test the contact picker using the real component.
+await act(async () => root.unmount()); root = createRoot(document.getElementById('root'));
+mailboxUiFixture = { messages: [], limited: false, contactRequired: true, contacts: [{ id: 'contact-a', name: 'Buyer', email: 'buyer@example.test' }, { id: 'contact-b', name: 'Colleague', email: 'colleague@example.test' }], mailbox: 'kam@example.test' };
+await act(async () => root.render(React.createElement(Email, { companyId: COMPANY, initiallyOpen: true, initialSource: 'mailbox' })));
+assert.match(document.querySelector('[role="status"]').textContent, /Choose the person/);
+mailboxUiFixture = { ...mailboxUiFixture, contactRequired: false, selectedContactId: 'contact-b', messages: [{ ...lastTwelve.messages[0], subject: 'Selected colleague only', text: '<script>private()</script>', textUnavailable: true }] };
+await act(async () => { const select = document.querySelector('[aria-label="Email contact"]'); select.value = 'contact-b'; select.dispatchEvent(new dom.window.Event('change', { bubbles: true })); });
+assert.match(requests.at(-1), /contactId=contact-b/);
+assert.match(document.body.textContent, /Selected colleague only/);
+assert.match(document.body.textContent, /Only its preview is shown/);
+assert.equal(document.querySelectorAll('script').length, 0);
 await act(async () => root.unmount());
-console.log('Sales history/navigation passed. Own-mailbox and workspace scope, active membership, exact company IDs, confirmed sends only, deduplication, bounded reads, private metadata, unavailable vs empty, lazy text, safe rendering, saved filters and upload navigation.');
+console.log('Sales history/navigation passed. Latest 12 actual messages in pipeline, Google and Microsoft bodies, chronological selection, exact contacts, no automatic mailbox reads, account/workspace isolation, contact choice, protected clients, denied membership, safe previews and UI rendering.');
