@@ -21,7 +21,16 @@ insert into workspace_members values('${ws}','${actor}','active','owner'),('${ws
 insert into companies(id,workspace_id,owner_id,name,attributes) values('${company}','${ws}','${actor}','Example','{"importedLead":{"version":1,"sourceRef":"sheet:1"}}');
 insert into team_client_shares(workspace_id,company_id,status,assigned_to_user_id) values('${ws}','${company}','active','${cam}');`);
 const file=fs.readdirSync('supabase/migrations').find(x=>x.endsWith('_sales_lead_handoff.sql'));
+const follow=fs.readdirSync('supabase/migrations').find(x=>x.endsWith('_sales_lead_feed_lee_sarah_to_sharon.sql'));
 await db.exec(fs.readFileSync(`supabase/migrations/${file}`,'utf8'));
+const followSql=fs.readFileSync(`supabase/migrations/${follow}`,'utf8');
+assert.equal((followSql.match(/create or replace function/gi)||[]).length,1);
+assert.match(followSql,/security invoker set search_path=pg_catalog/);
+assert.match(followSql,/revoke all on function public\.intake_sales_lead_service\(uuid,uuid,uuid\) from public,anon,authenticated;/);
+assert.match(followSql,/grant execute on function public\.intake_sales_lead_service\(uuid,uuid,uuid\) to service_role;/);
+assert.doesNotMatch(followSql,/pending_sales_leads_service/);
+assert.match(fs.readFileSync(`supabase/migrations/${file}`,'utf8'),/where l\.bank_status='qualified'/);
+await db.exec(followSql);
 const one=async(q,v=[])=>(await db.query(q,v)).rows[0];
 const count=async t=>Number((await one(`select count(*) n from ${t}`)).n);
 const event=async(type,ref=type,by=cam,source='sheet:1')=>(await one('select record_sales_lead_event_service($1,$2,$3,$4) result',[ws,by,company,{type,ref,sourceRef:source,occurredAt:'2026-11-21T10:00:00Z'}])).result;
@@ -59,6 +68,27 @@ await assert.rejects(()=>db.query('update contacts set email=$1 where id=$2',['n
 assert.equal((await one('select attributes from contacts where id=$1',[newPerson.id])).attributes.custom,'preserved');
 await db.exec(`insert into adam_pipeline_leads(id,bank_status,company,domain,website) values('${id(11)}','qualified','Unsent','unsent.test','https://unsent.test');`);
 await assert.rejects(()=>intake(id(11)),/sales_lead_not_sent/);
+// Sharon already holds more of the book, so the smaller-book fallback would choose Cam.
+await db.exec(`insert into team_client_shares(workspace_id,company_id,status,assigned_to_user_id) values('${ws}','${id(80)}','active','${sharon}'),('${ws}','${id(81)}','active','${sharon}'),('${ws}','${id(82)}','active','${sharon}');
+insert into adam_pipeline_leads(id,bank_status,emailed_at,company,domain,website,owner) values
+('${id(20)}','qualified',now(),'Sarah Co','sarah-co.test','https://sarah-co.test','Sarah'),
+('${id(21)}','qualified',now(),'Lee Co','lee-co.test','https://lee-co.test',' LEE '),
+('${id(22)}','qualified',now(),'Sharon Co','sharon-co.test','https://sharon-co.test','sharon'),
+('${id(23)}','qualified',now(),'Other Co','other-co.test','https://other-co.test','Alex');`);
+assert.equal((await intake(id(20))).assignedTo,sharon,'sarah feed rows go to Sharon');
+assert.equal((await intake(id(21))).assignedTo,sharon,'lee feed rows go to Sharon');
+assert.equal((await intake(id(22))).assignedTo,sharon,'sharon feed rows stay with Sharon');
+assert.equal((await intake(id(23))).assignedTo,cam,'any other owner still follows the smaller book');
+// Cam now holds more, so the fallback would choose Sharon. Named Kamm rows stay with Cam.
+await db.exec(`insert into team_client_shares(workspace_id,company_id,status,assigned_to_user_id) values
+('${ws}','${id(83)}','active','${cam}'),('${ws}','${id(84)}','active','${cam}'),('${ws}','${id(85)}','active','${cam}'),('${ws}','${id(86)}','active','${cam}'),('${ws}','${id(87)}','active','${cam}'),('${ws}','${id(88)}','active','${cam}'),('${ws}','${id(89)}','active','${cam}'),('${ws}','${id(90)}','active','${cam}');
+insert into adam_pipeline_leads(id,bank_status,emailed_at,company,domain,website,owner) values
+('${id(24)}','qualified',now(),'Kamm Co','kamm-co.test','https://kamm-co.test','Kamm'),
+('${id(25)}','qualified',now(),'Kam Co','kam-co.test','https://kam-co.test','kam'),
+('${id(26)}','qualified',now(),'Cam Co','cam-co.test','https://cam-co.test','cam');`);
+assert.equal((await intake(id(24))).assignedTo,cam,'kamm feed rows stay with Kamm');
+assert.equal((await intake(id(25))).assignedTo,cam,'kam feed rows stay with Kamm');
+assert.equal((await intake(id(26))).assignedTo,cam,'cam feed rows stay with Kamm');
 await db.exec('set role authenticated');await assert.rejects(()=>db.query('select * from sales_lead_sources'),/permission denied/);
 await assert.rejects(()=>db.query('select record_sales_lead_event_service($1,$2,$3,$4)',[ws,actor,company,{}]),/permission denied/);
 await db.close();console.log('Sales lead handoff: atomic replay, signals, assignment, suppression, report bounds and denied access passed');
