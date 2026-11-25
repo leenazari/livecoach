@@ -10,6 +10,7 @@ const now = Date.parse("2026-10-05T11:00:00Z");
 const stamp = (minutes) => new Date(now - minutes * 60000).toISOString();
 let scope = { workspaceId: "workspace-a", userId: "alice" };
 let deny = false;
+let conflict = false;
 const queries = [];
 const rows = {
   meet_capture_subscribers: [
@@ -46,14 +47,14 @@ const db = { from(table) {
       predicates.push((row) => filters.some(([key, value]) => row[key] >= value));
       return this;
     },
-    is(key, value) { predicates.push((row) => row[key] === value); return this; },
+    is(key, value) { predicates.push((row) => (row[key] ?? null) === value); return this; },
     order() { return this; },
     limit(value) { limit = value; return this; },
     range(a, b) { start = a; end = b + 1; return this; },
     maybeSingle() { single = true; return this; },
     then(resolve, reject) {
       try {
-        let data = (rows[table] || []).filter((row) => predicates.every((test) => test(row))).slice(start, end).slice(0, limit);
+        let data = conflict && patch ? [] : (rows[table] || []).filter((row) => predicates.every((test) => test(row))).slice(start, end).slice(0, limit);
         if (patch) data.forEach((row) => Object.assign(row, patch));
         return Promise.resolve({ data: single ? data[0] || null : data, error: null }).then(resolve, reject);
       } catch (error) { return Promise.reject(error).then(resolve, reject); }
@@ -81,6 +82,22 @@ assert.doesNotMatch(alice.recovered[0].transcript, /Secret/);
 assert.equal(rows.interview_sessions[0].transcript, null, "Raw speech is not duplicated into another store");
 assert.ok(queries.every((query) => query.filters.some(([key, value]) => key === "workspace_id" && value === scope.workspaceId)));
 assert.ok(queries.filter((query) => ["interview_sessions", "meet_capture_subscribers"].includes(query.table)).every((query) => query.filters.some(([key, value]) => key === "owner_id" && value === scope.userId)));
+
+rows.interview_sessions[0].transcript = "Buyer: Only the first few words were saved by the browser.";
+rows.interview_sessions[0].updated_at = stamp(90);
+rows.interview_sessions[0].ended_at = stamp(80);
+const restored = await recover(new Set(), () => true, now);
+assert.equal(rows.interview_sessions[0].transcript, restored.recovered[0].transcript, "An existing partial snapshot is repaired from the full capture");
+assert.equal(rows.interview_sessions[0].ended_at, stamp(20), "An old end stamp must not predate this conversation");
+assert.equal(rows.interview_sessions[1].transcript, null, "Other accounts are untouched");
+assert.ok(queries.filter(q => q.writes?.transcript).every(q => q.filters.some(([key]) => key === "updated_at")), "Snapshot replacement is concurrency guarded");
+const completeSnapshot = rows.interview_sessions[0].transcript;
+rows.interview_sessions[0].transcript = "Buyer: A partial browser save.";
+conflict = true;
+assert.equal((await recover(new Set(), () => true, now)).recovered.length, 0, "Concurrent source changes postpone recovery instead of overwriting them");
+assert.equal(rows.interview_sessions[0].transcript, "Buyer: A partial browser save.");
+conflict = false;
+rows.interview_sessions[0].transcript = completeSnapshot;
 
 queries.length = 0;
 assert.equal((await recover(new Set(["alice-room"]), () => true, now)).recovered.length, 0);

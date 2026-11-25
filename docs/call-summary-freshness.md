@@ -14,6 +14,11 @@ sources are reused without an AI pass. Legacy summaries remain valid unless
 the captured call ended more than two minutes after their generation, allowing
 only small end-call write-order differences.
 
+Recovery can repair an existing partial browser transcript from the verified
+full notetaker capture, using an update-time guard. It never creates a new raw
+snapshot for unattended sessions without one, or replaces a more complete
+snapshot with fewer captured words. A concurrent save postpones recovery.
+
 A changed source replaces the same canonical recap with an owner/workspace
 scoped, cache-key guarded update. The old summary and action package remain in
 private `post_call_package.summaryRevisions`. They are not passed to generation

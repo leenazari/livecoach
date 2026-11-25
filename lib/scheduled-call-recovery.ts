@@ -89,15 +89,24 @@ export async function recoverScheduledCallInputs(
     }
     const transcript = lines.join("\n");
     if (transcript.length < 500) continue;
-    const endedAt = session.ended_at || capture.ended_at || last.created_at;
-    if (!session.ended_at) {
-      const { error } = await supabaseService.from("interview_sessions")
-        .update({ ended_at: endedAt })
+    const endedAt = session.ended_at && Date.parse(session.ended_at) >= Date.parse(last.created_at)
+      ? session.ended_at : capture.ended_at || last.created_at;
+    // A browser may have saved only the start of the call before closing.
+    // Refresh that EXISTING snapshot from the complete verified capture, so
+    // summary, download and Brain readers cannot favour a shorter copy. Do
+    // not create a duplicate raw store for unattended sessions with none.
+    const wordCount = (value: string) => value.replace(/^[^:\n]{1,80}:\s*/gm, "").match(/\S+/g)?.length || 0;
+    const refreshSnapshot = !!session.transcript && wordCount(transcript) > wordCount(session.transcript);
+    if (endedAt !== session.ended_at || refreshSnapshot) {
+      let update = supabaseService.from("interview_sessions")
+        .update({ ended_at: endedAt, ...(refreshSnapshot ? { transcript } : {}) })
         .eq("workspace_id", scope.workspaceId)
         .eq("owner_id", scope.userId)
-        .eq("session_id", session.session_id)
-        .is("ended_at", null);
+        .eq("session_id", session.session_id);
+      update = session.updated_at ? update.eq("updated_at", session.updated_at) : update.is("updated_at", null);
+      const { data: saved, error } = await update.select("session_id").maybeSingle();
       if (error) throw error;
+      if (!saved) continue; // Another tab changed this source. Re-read next sweep.
     }
     recovered.push({
       ...session,
