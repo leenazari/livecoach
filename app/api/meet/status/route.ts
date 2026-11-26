@@ -4,6 +4,7 @@ import { resolveRecordScope } from "@/lib/record-scope";
 import { validUuid } from "@/lib/shared-meet-capture";
 import { supabaseService } from "@/lib/supabase";
 import { validMeetSessionId } from "@/lib/transcriber";
+import { crmBlockerPayload } from "@/lib/crm-blocker";
 
 async function recallRequest(endpoint: string, key: string) {
   const call = (authorization: string) =>
@@ -123,7 +124,7 @@ async function readStatus(req: NextRequest, resume = false) {
       if (subscriptionError) throw subscriptionError;
     }
 
-    const subscription = subscriptions?.[0];
+    let subscription = subscriptions?.[0];
     if (!subscription) {
       return NextResponse.json(
         { error: "No notetaker request exists for this call" },
@@ -177,7 +178,29 @@ async function readStatus(req: NextRequest, resume = false) {
           { status: 404, headers: { "Cache-Control": "private, no-store" } });
       }
     }
-    const identity = {
+    // The same occurrence may have an older reservation room and a newer
+    // timestamped room after a rollout. Reuse this user's already-active
+    // subscription to this exact capture/event, never another user's room or
+    // another meeting. Do not reactivate an explicitly ended subscription.
+    const subscriptionUpcomingId = subscription.upcoming_id;
+    const sameCaptureActiveSubscription = async () => {
+      let query = supabaseService.from("meet_capture_subscribers")
+        .select("capture_id,session_id,upcoming_id,status,updated_at")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
+        .eq("capture_id", capture.id)
+        .eq("status", "active");
+      query = subscriptionUpcomingId
+        ? query.eq("upcoming_id", subscriptionUpcomingId)
+        : query.is("upcoming_id", null);
+      const { data, error } = await query.maybeSingle();
+      if (error) throw error;
+      return data;
+    };
+    if (subscription.status === "scheduled") {
+      subscription = await sameCaptureActiveSubscription() || subscription;
+    }
+    let identity = {
       botId: capture.bot_id,
       sessionId: subscription.session_id,
       upcomingId: subscription.upcoming_id,
@@ -260,17 +283,32 @@ async function readStatus(req: NextRequest, resume = false) {
         .select("status")
         .maybeSingle();
       if (activateError?.code === "23505") {
-        return NextResponse.json(
-          { error: "End your other LiveCoach session before opening this call.", code: "transcriber_already_active" },
-          { status: 409, headers: { "Cache-Control": "private, no-store" } }
-        );
-      }
-      if (activateError) throw activateError;
-      if (!activated) {
-        return NextResponse.json(
-          { error: "This call session has ended. Reopen the call to view its saved transcript." },
-          { status: 409, headers: { "Cache-Control": "private, no-store" } }
-        );
+        // Another tab can activate the old room after the lookup above. A
+        // unique-index conflict is recoverable only for this same capture.
+        const active = await sameCaptureActiveSubscription();
+        if (!active) {
+          return NextResponse.json(
+            {
+              ...crmBlockerPayload({
+                code: "transcriber_already_active",
+                title: "Live coaching is open for a different call",
+                reason: "Your account already has a live coaching session for another meeting",
+                nextAction: "End that call, then reopen this one. This meeting's notetaker keeps recording",
+              }),
+              code: "transcriber_already_active",
+            },
+            { status: 409, headers: { "Cache-Control": "private, no-store" } }
+          );
+        }
+        identity = { ...identity, sessionId: active.session_id, upcomingId: active.upcoming_id };
+      } else {
+        if (activateError) throw activateError;
+        if (!activated) {
+          return NextResponse.json(
+            { error: "This call session has ended. Reopen the call to view its saved transcript." },
+            { status: 409, headers: { "Cache-Control": "private, no-store" } }
+          );
+        }
       }
     }
 
@@ -284,8 +322,21 @@ async function readStatus(req: NextRequest, resume = false) {
       { headers: { "Cache-Control": "private, no-store" } }
     );
   } catch (error: any) {
+    const reference = crypto.randomUUID();
+    const code = String(error?.code || "");
+    console.error("live_coaching_recovery_failed", {
+      reference,
+      code: /^[A-Z0-9_]{1,32}$/.test(code) ? code : "request_failed",
+    });
     return NextResponse.json(
-      { error: error?.message || "Unable to check the notetaker status" },
+      crmBlockerPayload({
+        code: "live_coaching_recovery_failed",
+        title: "Live coaching could not connect",
+        reason: "The existing notetaker session could not be verified",
+        nextAction: "Keep the meeting open while LiveCoach retries. If this continues, sign in again and reopen this call. Do not send another notetaker while its status is unclear",
+        responsible: "system",
+        reference,
+      }),
       {
         status: 500,
         headers: { "Cache-Control": "private, no-store" },

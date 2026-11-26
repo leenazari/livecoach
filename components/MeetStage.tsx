@@ -111,6 +111,7 @@ export default function MeetStage({
   const setMeetingUrl = onMeetingUrlChange ?? setMeetingUrlInternal;
   const [botId, setBotId] = useState("");
   const [recovering, setRecovering] = useState(true);
+  const [recoveryBlocked, setRecoveryBlocked] = useState(false);
   const [streamReady, setStreamReady] = useState(false);
   const [botName, setBotName] = useState("Your LiveCoach Notetaker");
   const [status, setStatus] = useState("checking for an existing notetaker...");
@@ -606,7 +607,7 @@ export default function MeetStage({
     // Guard against a double-tap firing two bots: `disabled` only updates on the
     // next render, so a fast second click can slip through before React catches
     // up. The ref blocks it synchronously, and we never send if a bot is live.
-    if (recovering || !meetingUrl.trim() || botIdRef.current || sendingRef.current) return;
+    if (recovering || recoveryBlocked || !meetingUrl.trim() || botIdRef.current || sendingRef.current) return;
     sendingRef.current = true;
     setStatus("sending bot...");
     try {
@@ -676,7 +677,7 @@ export default function MeetStage({
       sendingRef.current = false;
       retryInProgressRef.current = false;
     }
-  }, [recovering, meetingUrl, room, upcomingId, wsState, connect, deliverBackfill]);
+  }, [recovering, recoveryBlocked, meetingUrl, room, upcomingId, wsState, connect, deliverBackfill]);
 
   // Recall accepts a create request before the meeting platform has accepted
   // the bot. Poll the exact provider lifecycle while joining so LiveCoach never
@@ -715,6 +716,7 @@ export default function MeetStage({
           return;
         }
         if (response.status === 404) {
+          setRecoveryBlocked(false);
           setRecovering(false);
           setStreamReady(true);
           setStatus("not connected");
@@ -726,9 +728,15 @@ export default function MeetStage({
         if (!response.ok) {
           setStatus(data.error || "Unable to reconnect to the existing notetaker. Retrying...");
           // Access/conflict errors need a visible resolution, not a new bot.
-          if ([400, 401, 403, 409].includes(response.status)) return;
+          if ([400, 401, 403, 409].includes(response.status)) {
+            setRecoveryBlocked(true);
+            setStreamReady(false);
+            setRecovering(false);
+            return;
+          }
         }
         if (!cancelled && response.ok && data?.state) {
+          setRecoveryBlocked(false);
           if (data.sessionId !== room) {
             // An older manual call can have a different saved private room.
             // Let the parent remount against that exact room before streaming.
@@ -810,16 +818,16 @@ export default function MeetStage({
 
   const handledStartRequestRef = useRef(0);
   useEffect(() => {
-    if (recovering) return;
+    if (recovering || recoveryBlocked) return;
     if (!startRequest || startRequest === handledStartRequestRef.current) return;
     handledStartRequestRef.current = startRequest;
     sendBot();
-  }, [recovering, startRequest, sendBot]);
+  }, [recovering, recoveryBlocked, startRequest, sendBot]);
 
   // Retry: stop the (non-joined) bot and send a fresh one. Forces the synchronous
   // botId mirror clear so the re-send isn't blocked by the in-flight guard.
   async function retryBot() {
-    if (retryInProgressRef.current) return;
+    if (recoveryBlocked || retryInProgressRef.current) return;
     retryInProgressRef.current = true;
     if (!(await stopBot())) {
       retryInProgressRef.current = false;
@@ -912,6 +920,8 @@ export default function MeetStage({
   const airPill =
     recovering
       ? { cls: "border-amber/60 bg-amber/15 text-amber", dot: "bg-amber animate-pulse", label: "Connecting…" }
+      : recoveryBlocked
+      ? { cls: "border-rust/60 bg-rust/15 text-rust", dot: "bg-rust", label: "Coaching unavailable" }
       : air === "on"
       ? { cls: "border-sage/60 bg-sage/15 text-sage", dot: "bg-sage animate-pulse", label: "On air" }
       : air === "joined"
@@ -958,9 +968,11 @@ export default function MeetStage({
         />
         <button
           onClick={sendBot}
-          disabled={recovering || !meetingUrl.trim() || !!botId || status === "sending bot..."}
+          disabled={recovering || recoveryBlocked || !meetingUrl.trim() || !!botId || status === "sending bot..."}
           title={
-            botId
+            recoveryBlocked
+              ? status
+              : botId
               ? "A notetaker request is active. Stop it before sending another."
               : "Send the bot to join and transcribe"
           }
@@ -978,6 +990,8 @@ export default function MeetStage({
         >
           {recovering
             ? "connecting…"
+            : recoveryBlocked
+            ? "Check call access"
             : botId
             ? air === "on"
               ? "● on air"

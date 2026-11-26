@@ -37,7 +37,7 @@ const savedFetch = globalThis.fetch;
 // stubbed. Testing an isolated start button misses the hidden-parent regression.
 for (const scenario of [
   "no-focus", "focus-only", "full-plan", "existing-live", "prep-failed",
-  "call-loading", "call-denied", "call-mismatch", "stale-meeting", "invalid-meeting", "new-call",
+  "call-loading", "delayed-call-hydration", "call-denied", "call-mismatch", "stale-meeting", "invalid-meeting", "new-call",
   "lead-choice", "lead-choice-partial",
   "sharon-teams", "cam-teams", "sharon-existing-teams", "cam-existing-teams",
 ]) {
@@ -49,7 +49,7 @@ for (const scenario of [
     : "https://meet.google.com/abc-defg-hij";
   const existingLive = scenario.includes("existing");
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
-    url: `https://crm.test/call${scenario === "new-call" ? "" : `?upcoming=${upcomingId}`}${scenario === "stale-meeting" ? "&meetingUrl=https%3A%2F%2Fmeet.google.com%2Fold-link-xxx" : ""}`,
+    url: `https://crm.test/call${scenario === "new-call" ? "" : `?upcoming=${upcomingId}`}${["call-loading", "delayed-call-hydration", "call-denied", "call-mismatch", "stale-meeting"].includes(scenario) ? "&meetingUrl=https%3A%2F%2Fmeet.google.com%2Fold-link-xxx" : ""}`,
     pretendToBeVisual: true,
   });
   Object.assign(globalThis, {
@@ -59,12 +59,16 @@ for (const scenario of [
   });
   dom.window.HTMLElement.prototype.scrollIntoView = () => {};
   const requests = [], opened = [], botRequests = [];
+  const mountedRooms = [];
   dom.window.open = (...args) => { opened.push(args); return null; };
   let releasePrep;
   const prepPending = new Promise(resolve => { releasePrep = resolve; });
+  let releaseCall;
+  const callPending = new Promise(resolve => { releaseCall = resolve; });
   const stage = scenario === "focus-only" ? "focus" : scenario === "full-plan" ? "full" : "none";
   const call = {
     id: scenario === "call-mismatch" ? companyId : upcomingId,
+    scheduled_at: "2026-11-26T10:30:00Z",
     company_id: companyId, company: "Example Learning",
     title: "Programme review across projects", workstream_id: null,
     primaryAttendee: null,
@@ -82,6 +86,7 @@ for (const scenario of [
     if (url === "/api/crm/ai-mode") return { mode: "economical" };
     if (url === `/api/crm/upcoming/${upcomingId}` && !options) {
       if (scenario === "call-loading") return new Promise(() => {});
+      if (scenario === "delayed-call-hydration") await callPending;
       if (scenario === "call-denied") throw new Error("Call unavailable");
       if (leadConfirmed && scenario === 'lead-choice-partial') throw new Error('Read interrupted');
       return { call: structuredClone(call) };
@@ -118,6 +123,7 @@ for (const scenario of [
   const Empty = () => null;
   const MockMeetStage = props => {
     React.useEffect(() => {
+      mountedRooms.push(props.room);
       if (existingLive) props.onSessionRecovered(props.room, true);
     }, []);
     React.useEffect(() => {
@@ -164,6 +170,15 @@ for (const scenario of [
   };
   try {
     await act(async () => root.render(React.createElement(module.exports.default)));
+    if (scenario === "delayed-call-hydration") {
+      assert.deepEqual(mountedRooms, [], "A meeting URL cannot activate the temporary room while call details are loading");
+      await act(async () => releaseCall());
+    }
+    if (["call-loading", "call-denied", "call-mismatch"].includes(scenario)) {
+      assert.deepEqual(mountedRooms, [], "An unverified scheduled call cannot mount its transcript listener");
+    } else if (scenario !== "new-call") {
+      assert.deepEqual(mountedRooms, [scheduledCallSessionId(upcomingId, call.scheduled_at)], "Only the verified occurrence room is connected, before slow prep completes");
+    }
     if (existingLive) {
       assert.ok(button("Exit full screen"), "Recovered live call automatically expands suggestions");
       const meetingLink = document.querySelector('a[data-meeting-launch]');
@@ -195,7 +210,9 @@ for (const scenario of [
       assert.equal(botRequests.length, 0);
     } else if (["call-loading", "call-denied", "call-mismatch"].includes(scenario)) {
       assert.equal(live.disabled, true, "Unverified scheduled call cannot start");
-      assert.equal(button("Start call", dock).disabled, true);
+      const blockedStart = button("Open meeting + start", dock) || button("Start call", dock);
+      assert.ok(blockedStart, "The disabled start control stays visible while verifying the meeting");
+      assert.equal(blockedStart.disabled, true);
       assert.equal(opened.length, 0);
     } else if (existingLive) {
       assert.match(dock.textContent, /Call live/);
