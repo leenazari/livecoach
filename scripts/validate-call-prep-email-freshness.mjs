@@ -96,6 +96,9 @@ console.log('Call prep email refresh ordering, planner handoff, saved focus, man
 let plannerBody;
 const generate = callback('generatePlan', '\n\n  const prep =', {
   brief: 'Old render intent', role: '', clientEmailCtx: 'Old render email',
+  meetingLead: null, planStage: null, intentEditedRef: ref(false),
+  upcomingIdRef: ref('lee-call'), selectedCompsRef: ref([]), activityContextRef: ref(null),
+  salesPlan: { scriptRef: ref({ products: [] }) },
   focusBasisBriefRef: ref('Old render intent'), focusBasisEmailRef: ref('Old render email'),
   aiCallsRef: ref(0), linkedCompanyRef: ref({ id: 'lee-company' }),
   linkedWorkstreamRef: ref({ id: 'lee-thread' }), suggestedCompsRef: ref(['Old focus']),
@@ -129,3 +132,11 @@ for (const owner of ['lee', 'kam']) {
   assert.deepEqual(writes, [], 'A late response for another call cannot populate this screen');
 }
 console.log('Two-user and cross-call late-response isolation checks passed');
+
+const team = await refreshCallPrepContext(async (url, options) => {
+  assert.equal(url, "/api/crm/upcoming/team/brief");
+  assert.equal(options.method, "POST");
+  return { applies: true, intent: "Follow up on yesterday’s blocker" };
+}, { id: "team", source: "google", external_id: "event_20261126T103000Z", needsLeadConfirmation: true });
+assert.equal(team.intent, "Follow up on yesterday’s blocker");
+assert.equal(team.needsIdentityConfirmation, false);

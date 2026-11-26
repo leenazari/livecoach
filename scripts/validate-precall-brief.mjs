@@ -7,6 +7,8 @@ let owned = true;
 let matched = "thread";
 let reads = [];
 let recurring = false;
+let manual = false;
+let saved = null;
 const series = "calendar_root";
 const seedId = series + "_20261126T103000Z";
 const previousId = series + "_20261125T103000Z";
@@ -16,14 +18,14 @@ const fixtures = {
   upcoming_calls: filters => filters.source === "google" ? [
     { id: "other-standup", external_id: otherId, scheduled_at: "2026-11-25T11:10:00Z" },
     { id: "prior-occurrence", external_id: previousId, scheduled_at: "2026-11-25T10:30:00Z" },
-  ] : owned ? { ...scheduled, ...(recurring ? { source: "google", external_id: seedId, scheduled_at: "2026-11-26T10:30:00Z" } : {}) } : null,
+  ] : owned ? { ...scheduled, ...(recurring ? { source: "google", external_id: seedId, scheduled_at: "2026-11-26T10:30:00Z", ...(manual ? { intent: "My own agenda", prep: { intentMeta: { source: "manual" } } } : {}) } : {}) } : null,
   interview_sessions: () => [{ session_id: "prior-session", upcoming_id: "prior-occurrence" }],
   interview_summaries: () => recurring ? [{ id: "series-summary", session_id: "prior-session", summary: { headline: "Deployment blocked on test data" } }] : ({ id: "prior", created_at: "2026-11-24", summary: { headline: "Agreed a pilot", notCovered: ["Who signs off on the pilot"] } }),
   tasks: () => [{ id: "task", text: "Send pilot scope", due_at: null }],
   workstreams: () => ({ email_context: "Another contact's email", email_context_meta: { email_context_counterparty_email: "other@example.test" } }),
 };
 const deps = {
-  "next/server": { NextResponse: { json: (body, options) => ({ body, ...options }) } },
+  "next/server": { NextResponse: { json: (body, options) => ({ body, ...options, ok: options.status < 400, json: async () => body }) } },
   "@/lib/request-scope": { requireRequestScope: () => ({ workspaceId: "workspace", userId: "rep" }) },
   "@/lib/uuid": { isUuid: () => true },
   "@/lib/call-subject": { resolveCallLead: async () => ({
@@ -37,8 +39,11 @@ const deps = {
   } },
   "@/lib/supabase": { supabaseAdmin: { from(table) {
     const filters = {};
+    let patch;
     const query = {
       select: () => query,
+      update: value => { patch = value; return query; },
+      is: (field, value) => { filters[field] = value; return query; },
       eq: (field, value) => { filters[field] = value; return query; },
       order: () => query,
       like: (field, value) => { filters[field] = value; return query; },
@@ -57,6 +62,7 @@ const deps = {
           assert.equal(filters.workstream_id, "thread");
           assert.equal(filters.company_id, "company");
         }
+        if (patch) { saved = patch; resolve({ data: { id: "call" }, error: null }); return; }
         resolve({ data: fixtures[table](filters), error: null });
       },
     };
@@ -70,6 +76,17 @@ new Function("exports", ts.transpileModule(readFileSync(new URL("../lib/calendar
 deps["@/lib/calendar-series-key"] = seriesModule.exports;
 assert.equal(seriesModule.exports.googleCalendarSeriesKey("microsoft", seedId), null);
 assert.equal(seriesModule.exports.googleCalendarSeriesKey("google", "one-off"), null);
+const intentModule = { exports: {} };
+new Function("exports", ts.transpileModule(readFileSync(new URL("../lib/recurring-prep-intent.ts", import.meta.url), "utf8"), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText)(intentModule.exports);
+deps["@/lib/recurring-prep-intent"] = intentModule.exports;
+assert.match(intentModule.exports.recurringPrepIntent({
+  lastCall: { headline: "Pilot agreed", at: "2026-11-25" },
+  gap: "who signs off",
+  promises: [{ text: "Send scope", dueAt: "2026-11-27" }],
+  email: { context: "Procurement asked for a quote" },
+}), /Pilot agreed.*who signs off.*Send scope.*27 Nov.*Procurement asked for a quote/);
 const mod = { exports: {} };
 const code = ts.transpileModule(readFileSync(new URL("../app/api/crm/upcoming/[id]/brief/route.ts", import.meta.url), "utf8"), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
@@ -102,3 +119,10 @@ assert.equal(team.body.lastCall.id, "series-summary");
 assert.deepEqual(queries.interview_sessions.upcoming_id, ["prior-occurrence"]);
 assert.deepEqual(queries.tasks.source_ref, ["prior-session"]);
 console.log("Google series tests passed: no client required; different series excluded; actions scoped to matched sessions");
+const post = () => mod.exports.POST(null, { params: { id: "call" } });
+assert.match((await post()).body.intent, /Deployment blocked on test data.*Send pilot scope/);
+assert.equal(saved.prep.intentMeta.priorCallId, "series-summary");
+saved = null;
+manual = true;
+assert.equal((await post()).body.intent, "My own agenda");
+assert.equal(saved, null, "A manual intent must never be changed by prep");
