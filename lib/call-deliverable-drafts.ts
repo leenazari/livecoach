@@ -60,6 +60,8 @@ export async function prepareCallDeliverableDraft(taskId: string) {
   if (task.link_kind !== "email" && task.link_kind !== "drafts") return block("Open this task to select an email recipient and review the covering email.");
   let body = String(payload.preparationKind === "document" ? payload.coverEmailBody || "" : payload.body || "").replace(/\\n/g, "\n").trim();
   const subject = String(payload.preparationKind === "document" ? payload.coverEmailSubject || "" : payload.subject || "").trim();
+  if (!document && /\b(attached|attachment|enclosed)\b/i.test(body))
+    return block("This draft refers to an attachment, but no approved PDF was identified. Select or upload the promised document before preparing the mailbox draft.");
   if (document) body = body.replace(/\[To confirm:\s*(?:brochure|guide|document)(?:\s+link)?(?:\s+or\s+file)?\s*\]/gi, "the attached PDF");
   const unresolved = (Array.isArray(payload.missingDetails) ? payload.missingDetails : [])
     .filter((detail: string) => !(document && /(?:brochure|guide|document).*(?:link|file|version)|(?:link|file).*to include/i.test(detail)));
@@ -72,7 +74,10 @@ export async function prepareCallDeliverableDraft(taskId: string) {
   const recipient = workspace.recipients[0];
   const attachments = document ? [{ name: document.name, mimeType: "application/pdf" as const, content: await approvedDocumentBytes(document) }] : [];
   // Recheck the opt-in immediately before an external action.
-  if (!(await loadApprovedDocuments()).autoDrafts) return;
+  const latestRegistry = await loadApprovedDocuments();
+  if (!latestRegistry.autoDrafts) return;
+  if (document && latestRegistry.documents.find(d => d.key === document.key)?.version !== document.version)
+    return block("The approved PDF changed during preparation. LiveCoach will check the current version before preparing the draft.");
   const attempt = randomUUID();
   const trackingMessageId = `<lc-deliverable-${attempt}@livecoach.invalid>`;
   const state = { status: "preparing", attempt, startedAt: new Date().toISOString(), recipient: recipient.email,

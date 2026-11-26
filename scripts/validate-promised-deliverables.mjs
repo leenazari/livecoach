@@ -83,6 +83,7 @@ reset();enabled=false;await worker.prepareCallDeliverableDraft('task');assert.eq
 reset();providerFail=true;await worker.prepareCallDeliverableDraft('task');assert.equal(rows.tasks[0].payload.deliverableDraft.status,'uncertain');providerFail=false;await worker.prepareCallDeliverableDraft('task');assert.equal(createCount,1,'never blindly retry an interrupted provider write');
 reset();await worker.prepareCallDeliverableDraft('task');documents=[{...document,version:'00000000-0000-4000-8000-000000000002'}];await worker.prepareCallDeliverableDraft('task');assert.equal(createCount,1);assert.match(rows.tasks[0].payload.deliverableDraft.reason,/changed/,'new approved versions flag existing drafts without overwriting edits');
 reset();rows.tasks[0].payload.missingDetails.push('Confirm vacancy uploads');await worker.prepareCallDeliverableDraft('task');assert.equal(createCount,0,'unverified product claims stay blocked');
+reset();rows.tasks[0].text='Email Scott the proposal';Object.assign(rows.tasks[0].payload,{subject:'Proposal',sourceQuote:'I will email a proposal',body:'The proposal is attached.',missingDetails:[]});await worker.prepareCallDeliverableDraft('task');assert.equal(createCount,0,'attachment claims require a real approved file');
 reset();rows.tasks[0].owner_id='another-owner';await worker.prepareCallDeliverableDraft('task');assert.equal(createCount,0,'cross-account task IDs cannot create drafts');
 const notifications=compile('lib/crm-notifications.ts');
 let draftChecks=0;
