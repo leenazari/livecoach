@@ -177,6 +177,7 @@
     "validate:lead-generator": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-lead-generator.mjs",
     "validate:scripted-coaching": "node scripts/validate-scripted-call-coaching.mjs",
     "validate:adam-pitch": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-adam-three-stage-pitch.mjs",
+    "validate:promised-deliverables": "node scripts/validate-promised-deliverables.mjs",
     "validate:call-action-preparation": "node scripts/validate-call-action-preparation.mjs",
     "validate:sales-lead-handoff": "node scripts/validate-sales-lead-handoff.mjs && node scripts/validate-sales-lead-ui.mjs && node scripts/validate-sales-lead-sync.mjs"
   },

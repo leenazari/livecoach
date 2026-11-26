@@ -1,4 +1,6 @@
 import { getAccessToken, googleConnected } from "@/lib/google";
+import { addMimeAttachments, type MailAttachment } from "@/lib/mail-attachments";
+import { createHash } from "node:crypto";
 
 // Read-only Gmail access for the app, using the SAME Google OAuth token as the
 // calendar (lib/google.ts). Lets the brain pull the mail thread with a contact
@@ -427,6 +429,8 @@ export function nameFromHeader(h: string): string {
 // ---------------------------------------------------------------------------
 
 type GmailComposedMessage = {
+  trackingMessageId?: string;
+  attachments?: MailAttachment[];
   to: string;
   subject: string;
   html: string;
@@ -455,6 +459,8 @@ function gmailRawMessage(opts: GmailComposedMessage): string {
     ...(opts.from ? [`From: ${oneLineHeader(opts.from, 500)}`] : []),
     ...(opts.replyTo ? [`Reply-To: ${oneLineHeader(opts.replyTo, 500)}`] : []),
     `Subject: ${subject}`,
+    ...(opts.trackingMessageId && /^<lc-deliverable-[0-9a-f-]+@livecoach\.invalid>$/.test(opts.trackingMessageId)
+      ? [`Message-ID: ${opts.trackingMessageId}`] : []),
     ...(opts.inReplyTo
       ? [`In-Reply-To: ${oneLineHeader(opts.inReplyTo, 500)}`]
       : []),
@@ -476,7 +482,7 @@ function gmailRawMessage(opts: GmailComposedMessage): string {
     "",
     `--${boundary}--`,
   ].join("\r\n");
-  return Buffer.from(raw, "utf8")
+  return Buffer.from(addMimeAttachments(raw, opts.attachments), "utf8")
     .toString("base64")
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
@@ -553,6 +559,34 @@ export async function sendMail(
   } catch (e: any) {
     return { ok: false, error: e?.message || "send failed" };
   }
+}
+
+export async function verifySentCallDeliverable(input: {
+  trackingMessageId: string; recipient: string; bodyHash: string;
+  documents: Array<{ name: string; size: number; sha256: string }>;
+}, ownerId: string): Promise<string | null> {
+  if (!/^<lc-deliverable-[0-9a-f-]+@livecoach\.invalid>$/.test(input.trackingMessageId)) return null;
+  const token = await getAccessToken(false, ownerId);
+  if (!token) throw new Error("Mailbox unavailable");
+  const search = new URLSearchParams({ q: `in:sent rfc822msgid:${input.trackingMessageId.slice(1, -1)}`, maxResults: "2" });
+  const found = await api(`/messages?${search}`, token, ownerId, { strict: true });
+  if (found?.messages?.length !== 1) return null;
+  const sent = await api(`/messages/${encodeURIComponent(found.messages[0].id)}?format=full`, token, ownerId, { strict: true });
+  if (!sent?.labelIds?.includes("SENT") || header(sent.payload?.headers, "Message-ID") !== input.trackingMessageId ||
+    emailFromHeader(header(sent.payload?.headers, "To")).toLowerCase() !== input.recipient.toLowerCase()) return null;
+  const flatten = (part: any): any[] => [part, ...(part?.parts || []).flatMap(flatten)];
+  const parts = flatten(sent.payload);
+  const plain = parts.find(p => p.mimeType === "text/plain" && p.body?.data);
+  const text = plain ? Buffer.from(plain.body.data, "base64url").toString("utf8").replace(/\s+/g, " ").trim() : "";
+  if (createHash("sha256").update(text).digest("hex") !== input.bodyHash) return null;
+  for (const document of input.documents) {
+    const part = parts.find(p => p.filename === document.name && p.body?.size === document.size);
+    if (!part) return null;
+    const data = part.body?.data || (part.body?.attachmentId
+      ? (await api(`/messages/${encodeURIComponent(sent.id)}/attachments/${encodeURIComponent(part.body.attachmentId)}`, token, ownerId, { strict: true }))?.data : null);
+    if (!data || createHash("sha256").update(Buffer.from(data, "base64url")).digest("hex") !== document.sha256) return null;
+  }
+  return sent.id;
 }
 
 export async function createGmailDraft(

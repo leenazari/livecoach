@@ -12,6 +12,7 @@ import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 import { POST as runCalendarSync } from "@/app/api/crm/calendar-sync/route";
 import { getAppConfigValue, setAppConfigValue } from "@/lib/app-config";
 import { selectNextDayTasks } from "@/lib/daily-digest-tasks";
+import { callCommitmentNeedsAttention } from "@/lib/call-commitment-policy";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -181,6 +182,7 @@ async function runDigestForAccount(
       completedRes,
       openRes,
       tomorrowTasksRes,
+      commitmentsRes,
       upcomingRes,
       oppsRes,
     ] = await Promise.all([
@@ -219,6 +221,19 @@ async function runDigestForAccount(
         .lte("due_at", tomorrowTaskHorizon)
         .order("due_at", { ascending: true })
         .limit(1000),
+      // Undated promises must not disappear behind the general overdue queue.
+      supabaseAdmin
+        .from("tasks")
+        .select("id,text,status,company_id,kind,source,link_kind,due_at,created_at,payload")
+        .eq("workspace_id", account.workspaceId)
+        .eq("owner_id", account.userId)
+        .eq("status", "open")
+        .eq("source", "call")
+        .eq("kind", "commitment")
+        .eq("payload->>ownerType", "me")
+        .in("payload->>preparationKind", ["email", "document"])
+        .order("created_at", { ascending: false })
+        .limit(1000),
       supabaseAdmin
         .from("upcoming_calls")
         .select("id, title, company_id, scheduled_at, intent, prepped")
@@ -242,6 +257,7 @@ async function runDigestForAccount(
       completedRes,
       openRes,
       tomorrowTasksRes,
+      commitmentsRes,
       upcomingRes,
       oppsRes,
     ]) {
@@ -269,6 +285,7 @@ async function runDigestForAccount(
           ...completed,
           ...(openRes.data || []),
           ...(tomorrowTasksRes.data || []),
+          ...(commitmentsRes.data || []),
           ...tomorrowCalls,
           ...(oppsRes.data || []),
         ]
@@ -328,7 +345,9 @@ async function runDigestForAccount(
       progress.push(`<strong>Completed:</strong> ${esc(capitaliseSentenceStarts(task.text))}${company ? ` <span style="color:#858078;">(${esc(company)})</span>` : ""}`);
     }
 
-    const openTasks = openRes.data || [];
+    const openTasks = [...new Map(
+      [...(openRes.data || []), ...(commitmentsRes.data || [])].map((task: any) => [task.id, task])
+    ).values()];
     const opportunities = oppsRes.data || [];
     const bestOpportunity = new Map<string, any>();
     for (const opportunity of opportunities) {
@@ -359,6 +378,10 @@ async function runDigestForAccount(
         const value = Number(opportunity?.value) || 0;
         let score = 0;
         let reason = "Open action";
+        if (callCommitmentNeedsAttention(task, now)) {
+          score += 1000;
+          reason = "Promised follow-up still outstanding";
+        }
         if (Number.isFinite(due) && due < nowMs) {
           score += 120;
           reason = "Overdue";

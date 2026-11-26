@@ -1,4 +1,5 @@
 import "server-only";
+import type { MailAttachment } from "@/lib/mail-attachments";
 
 import {
   connectedEmail as googleConnectedEmail,
@@ -121,6 +122,8 @@ export async function sendConnectedMail(
 }
 
 export type ConnectedMailDraftInput = {
+  trackingMessageId?: string;
+  attachments?: MailAttachment[];
   to: string;
   subject: string;
   text: string;
@@ -184,11 +187,14 @@ export async function createConnectedMailDraft(
         html: content.html,
         threadId: opts.threadId,
         sourceMessageId: opts.sourceMessageId,
+        attachments: opts.attachments,
+        trackingMessageId: opts.trackingMessageId,
       },
       ownerId
     );
   }
   if (connection.provider === "microsoft") {
+    if (opts.attachments?.length) return { ok: false, error: "Automatic PDF drafts currently require a connected Google mailbox. Review this task before creating an Outlook draft." };
     return createMicrosoftMailDraft(
       {
         to: opts.to,

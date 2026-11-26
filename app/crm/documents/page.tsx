@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import NavMenu from "@/components/crm/NavMenu";
 import { crmFetch } from "@/lib/crm";
+import ApprovedDocuments from "@/components/crm/ApprovedDocuments";
 
 type DocumentJob = {
   id: string;
@@ -91,6 +92,7 @@ export default function DocumentsPage() {
           </p>
         </div>
 
+        <ApprovedDocuments />
         {blocker ? (
           <p
             role="alert"

@@ -507,6 +507,7 @@ scope = { ...scope, userId: cam };
 let preparedCached = 0;
 const jobs = compile("lib/call-summary-jobs.ts", {
   ...common,
+  "@/lib/call-summary-freshness": compile("lib/call-summary-freshness.ts"),
   "@/lib/call-action-preparation": {
     prepareCallActions: async () => preparedCached++,
   },
