@@ -14,11 +14,14 @@ export async function prepareCallDeliverableDraft(taskId: string) {
   const scope = await resolveRecordScope();
   const registry = await loadApprovedDocuments();
   if (!registry.autoDrafts) return;
-  const result = await supabaseService.from("tasks").select("id,text,status,kind,source,payload,link_kind")
+  const result = await supabaseService.from("tasks").select("id,text,status,kind,source,payload,link_kind,created_at")
     .eq("workspace_id", scope.workspaceId).eq("owner_id", scope.userId).eq("id", taskId).maybeSingle();
   if (result.error) throw result.error;
   const task = result.data, payload = task?.payload || {};
   if (!task || task.status !== "open" || task.kind !== "commitment" || task.source !== "call" || payload.ownerType !== "me") return;
+  // Enabling automatic drafts must not replay old, possibly already-fulfilled
+  // conversations. Existing commitments still receive reminders for review.
+  if (!payload.deliverableDraft && registry.autoDraftsSince && Date.parse(task.created_at) < Date.parse(registry.autoDraftsSince)) return;
   if (payload.deliverableDraft?.status === "ready") {
     const state = payload.deliverableDraft;
     if ((state.documents || []).some((old: any) => registry.documents.find(d => d.key === old.key)?.version !== old.version)) {

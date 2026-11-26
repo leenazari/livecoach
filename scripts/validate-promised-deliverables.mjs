@@ -22,7 +22,7 @@ const old = '2026-11-25T15:45:00Z';
 const scope = { userId: 'owner', workspaceId: 'workspace' };
 const document = { key: 'adam_brochure', version: '00000000-0000-4000-8000-000000000001', name: 'adam.pdf', size: 10, sha256: 'hash' };
 const task = (id = 'task', overrides = {}) => ({ id, workspace_id: 'workspace', owner_id: 'owner', status: 'open', source: 'call', kind: 'commitment', link_kind: 'email', text: 'Send Scott the Adam brochure', created_at: old, due_at: null,
- payload: { ownerType: 'me', preparationKind: 'email', subject: 'Adam brochure', sourceQuote: 'I will send you the Adam brochure', body: 'Hi Scott, here is the brochure: [To confirm: brochure link or file].', missingDetails: ['Brochure link or file to include in the email.'] }, ...overrides });
+ payload: { ownerType: 'me', preparationKind: 'email', commitmentReminder: true, subject: 'Adam brochure', sourceQuote: 'I will send you the Adam brochure', body: 'Hi Scott, here is the brochure: [To confirm: brochure link or file].', missingDetails: ['Brochure link or file to include in the email.'] }, ...overrides });
 assert.equal(policy.callCommitmentNeedsAttention(task(), now), true, 'undated promises require attention');
 for (const status of ['done','dismissed']) assert.equal(policy.callCommitmentNeedsAttention(task('t',{status}),now),false);
 assert.equal(policy.callCommitmentNeedsAttention(task('t',{payload:{ownerType:'counterparty',preparationKind:'email'}}),now),false);
@@ -43,7 +43,7 @@ assert.equal(parsed.status,0,parsed.stderr);
 assert.deepEqual(JSON.parse(parsed.stdout),{type:'multipart/mixed',count:1,name:'adam.pdf',bytes:pdf.toString(),plain:'Hello Scott'});
 assert.throws(()=>mime.addMimeAttachments(raw,[{name:'bad.pdf',mimeType:'application/pdf',content:Buffer.from('not PDF')}]),/PDF/);
 let rows, failTable = '', createCount=0, enabled=true, documents=[document], recipients=[{email:'scott@example.com'}], providerFail=false, sentId=null, gate=null;
-function at(row,key) { return key.includes('->') ? key.replaceAll('->>','->').split('->').reduce((v,k)=>v?.[k],row) : row[key]; }
+function at(row,key) { const value=key.includes('->') ? key.replaceAll('->>','->').split('->').reduce((v,k)=>v?.[k],row) : row[key];return key.includes('->>')&&value!=null?String(value):value; }
 const db = { from(table) {
  let filters=[], action='read', values, options;
  const q={ select(){return q;}, eq(k,v){filters.push(r=>k==='payload'?JSON.stringify(r[k])===v:at(r,k)===v);return q;}, is(k,v){filters.push(r=>r[k]==v);return q;}, in(k,v){filters.push(r=>v.includes(at(r,k)));return q;}, gt(k,v){filters.push(r=>r[k]>v);return q;}, order(){return q;}, limit(){return q;}, update(v){action='update';values=v;return q;}, upsert(v,o){action='upsert';values=v;options=o;return q;}, maybeSingle(){return run(true);}, then(resolve,reject){return run().then(resolve,reject);} };

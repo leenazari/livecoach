@@ -21,7 +21,7 @@ export async function PATCH(req: NextRequest) {
     requireRequestScope();
     const body = await req.json();
     if (typeof body.autoDrafts !== "boolean") return NextResponse.json({ error: "Choose whether automatic drafts are enabled" }, { status: 400 });
-    await setAppConfigValue({ key: AUTO_DRAFT_CONFIG, value: String(body.autoDrafts), visibility: "private" });
+    await setAppConfigValue({ key: AUTO_DRAFT_CONFIG, value: JSON.stringify({ enabled: body.autoDrafts, enabledSince: new Date().toISOString() }), visibility: "private" });
     return NextResponse.json({ ok: true, autoDrafts: body.autoDrafts });
   } catch { return blocked(); }
 }

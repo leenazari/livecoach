@@ -42,7 +42,7 @@ export default function ApprovedDocuments() {
   return <section className="mb-8 rounded-2xl border border-amber/40 bg-panel p-5">
     <h2 className="text-xl text-bone">Approved brochures and documents</h2>
     <p className="mt-2 text-sm text-muted">Upload the PDFs you approve for client emails. Replacing a document makes the new version available for future drafts. Your files are private to your account.</p>
-    <label className="mt-4 flex items-center gap-3 text-sm"><input type="checkbox" checked={autoDrafts} disabled={!!busy || !loaded} onChange={() => void toggle()} /> Automatically prepare Gmail drafts for my promised call follow-ups</label>
+    <label className="mt-4 flex items-center gap-3 text-sm"><input type="checkbox" checked={autoDrafts} disabled={!!busy || !loaded} onChange={() => void toggle()} /> Automatically prepare Gmail drafts for my new call follow-ups</label>
     <p className="mt-2 text-xs text-muted">Drafts stay unsent. Missing documents, details or unclear recipients are flagged in Tasks. Reminders continue until you finish or defer the work.</p>
     <div className="mt-5 flex flex-wrap gap-3">
       <select aria-label="Document type" value={key} disabled={!!busy} onChange={e => setKey(e.target.value)} className="rounded-lg border border-edge bg-ink p-3 text-sm">{Object.entries(APPROVED_DOCUMENTS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>

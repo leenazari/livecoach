@@ -7,7 +7,7 @@ import { APPROVED_DOCUMENTS, APPROVED_DOCUMENT_BUCKET, AUTO_DRAFT_CONFIG, DOCUME
 
 export async function loadApprovedDocuments() {
   const scope = await resolveRecordScope();
-  const result = await supabaseService.from("app_config").select("key,value")
+  const result = await supabaseService.from("app_config").select("key,value,updated_at")
     .eq("workspace_id", scope.workspaceId).eq("owner_id", scope.userId).eq("visibility", "private")
     .in("key", [AUTO_DRAFT_CONFIG, ...Object.keys(APPROVED_DOCUMENTS).map(k => DOCUMENT_CONFIG_PREFIX + k)]);
   if (result.error) throw result.error;
@@ -20,7 +20,11 @@ export async function loadApprovedDocuments() {
         value.path === approvedDocumentPath(scope.userId, scope.workspaceId, value.key, value.version)) documents.push(value);
     } catch { throw new Error("An approved document record needs review in Documents"); }
   }
-  return { documents, autoDrafts: result.data?.find(r => r.key === AUTO_DRAFT_CONFIG)?.value === "true" };
+  const config = result.data?.find(r => r.key === AUTO_DRAFT_CONFIG);
+  let setting: any = null;
+  try { setting = JSON.parse(config?.value || "false"); } catch { /* malformed preferences never grant an opt-in */ }
+  return { documents, autoDrafts: setting === true || setting?.enabled === true,
+    autoDraftsSince: setting?.enabledSince || config?.updated_at || null };
 }
 
 export function approvedDocumentPath(userId: string, workspaceId: string, key: ApprovedDocumentKey, version: string) {

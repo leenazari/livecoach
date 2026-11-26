@@ -28,6 +28,9 @@ export async function runCallCommitmentReminders(now = new Date()) {
     let query = supabaseService.from("tasks").select(columns)
       .eq("workspace_id", scope.workspaceId).eq("owner_id", scope.userId)
       .eq("source", "call").eq("kind", "commitment")
+      // New promises are opted into follow-through by call preparation. Older
+      // tasks need explicit escalation rather than a retrospective alert flood.
+      .eq("payload->>commitmentReminder", "true")
       .eq("payload->>ownerType", "me").in("payload->>preparationKind", ["email", "document"])
       .order("id", { ascending: true }).limit(100);
     if (after) query = query.gt("id", after);
