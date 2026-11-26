@@ -21,6 +21,7 @@ function load(file, dependency) {
 const { validUuid } = load("lib/shared-meet-capture.ts", (name) =>
   name.endsWith("meeting-url") ? { validMeetingUrl } : require(name)
 );
+const { crmBlockerPayload } = load("lib/crm-blocker.ts", require);
 const { validMeetSessionId } = load("lib/transcriber.ts", (name) => {
   if (name === "server-only" || name.endsWith("supabase")) return {};
   if (name.endsWith("meeting-url")) return { validMeetingUrl };
@@ -32,6 +33,7 @@ const eventC = "64883abe-8824-450a-a826-e1dbfa9e163a";
 const scheduledAt = new Date().toISOString();
 let scope = { userId: "lee", workspaceId: "workspace-a" };
 let denied = false, conflict = false, providerCalls = 0;
+let activateDuringWrite = null, failActiveLookup = false;
 const queries = [];
 const rows = {
   upcoming_calls: [
@@ -64,8 +66,13 @@ const db = { from(table) {
     limit(value) { limit = value; return this; },
     maybeSingle() { single = true; return this; },
     then(resolve, reject) {
+      if (failActiveLookup && table === "meet_capture_subscribers" && query.filters.some(([key, value]) => key === "status" && value === "active")) return Promise.resolve({ data: null, error: { message: "Active room lookup unavailable" } }).then(resolve, reject);
       if (conflict && query.patch?.status === "active") return Promise.resolve({ data: null, error: { code: "23505" } }).then(resolve, reject);
       const found = rows[table].filter((r) => predicates.every((p) => p(r))).slice(0, limit);
+      if (table === "meet_capture_subscribers" && query.patch?.status === "active") {
+        if (activateDuringWrite) { activateDuringWrite.status = "active"; activateDuringWrite = null; }
+        if (found.some(r => rows[table].some(other => other !== r && other.workspace_id === r.workspace_id && other.owner_id === r.owner_id && other.status === "active"))) return Promise.resolve({ data: null, error: { code: "23505" } }).then(resolve, reject);
+      }
       if (query.patch) found.forEach((r) => Object.assign(r, query.patch));
       return Promise.resolve({ data: single ? found[0] || null : found, error: null }).then(resolve, reject);
     },
@@ -88,6 +95,7 @@ const route = load("app/api/meet/status/route.ts", (name) => {
   if (name.endsWith("shared-meet-capture")) return { validUuid };
   if (name.endsWith("transcriber")) return { validMeetSessionId };
   if (name.endsWith("recall-bot-status")) return { currentRecallBotState };
+  if (name.endsWith("crm-blocker")) return { crmBlockerPayload };
   throw new Error(`Unexpected dependency ${name}`);
 });
 const request = (session = "lc-lee-room", upcoming = eventA) => ({ nextUrl: new URL(`https://crm.test/api/meet/status?session=${session}${upcoming ? `&upcoming=${upcoming}` : ""}`) });
@@ -103,6 +111,39 @@ assert.equal(rows.meet_capture_subscribers[0].status, "active");
 assert.equal(rows.meet_capture_subscribers[1].status, "scheduled");
 assert.equal(rows.meet_capture_subscribers[2].status, "scheduled", "Teammate activation is independent");
 assert.equal((await route.POST(request())).status, 200, "Refresh is idempotent");
+
+// A deployment can introduce an occurrence-specific room while the same
+// notetaker still has its original reservation. The browser used to activate
+// the old room before hydration, then block its own new room as another call.
+rows.meet_capture_subscribers.push({ owner_id: "lee", workspace_id: "workspace-a", session_id: "lc-lee-occurrence", upcoming_id: eventA, capture_id: "capture-a", status: "scheduled" });
+response = await route.POST(request("lc-lee-occurrence"));
+data = await response.json();
+assert.equal(response.status, 200);
+assert.equal(data.sessionId, "lc-lee-room", "Same-owner aliases of one capture resume the already-active room");
+assert.equal(rows.meet_capture_subscribers.filter((r) => r.owner_id === "lee" && r.status === "active").length, 1);
+assert.equal(rows.meet_capture_subscribers.at(-1).status, "scheduled", "Recovery never steals or rewrites a second private room");
+rows.meet_capture_subscribers[0].status = "scheduled";
+activateDuringWrite = rows.meet_capture_subscribers[0];
+data = await (await route.POST(request("lc-lee-occurrence"))).json();
+assert.equal(data.sessionId, "lc-lee-room", "A parallel tab activating the same capture is recovered after the unique-index conflict");
+assert.equal(rows.meet_capture_subscribers.at(-1).status, "scheduled");
+rows.meet_capture_subscribers.at(-1).status = "ended";
+data = await (await route.POST(request("lc-lee-occurrence"))).json();
+assert.equal(data.canResume, false, "An explicitly ended room cannot be reactivated through another alias");
+assert.equal(data.sessionId, "lc-lee-occurrence");
+rows.meet_capture_subscribers.at(-1).status = "scheduled";
+rows.meet_capture_subscribers[0].upcoming_id = eventB;
+assert.equal((await route.POST(request("lc-lee-occurrence"))).status, 409, "Matching capture alone cannot bypass a different calendar event");
+rows.meet_capture_subscribers[0].upcoming_id = eventA;
+failActiveLookup = true;
+response = await route.POST(request("lc-lee-occurrence"));
+assert.equal(response.status, 500, "Failed verification never claims coaching is connected");
+data = await response.json();
+assert.match(data.error, /session could not be verified/);
+assert.doesNotMatch(data.error, /Active room lookup unavailable/, "Internal read errors are never returned to the browser");
+assert.equal(data.blocker.code, "live_coaching_recovery_failed");
+failActiveLookup = false;
+rows.meet_capture_subscribers.pop();
 assert.ok(queries.every((q) => q.filters.some(([key, value]) => key === "workspace_id" && value === scope.workspaceId)));
 assert.ok(queries.filter((q) => q.table === "meet_capture_subscribers").every((q) => q.filters.some(([key, value]) => key === "owner_id" && value === scope.userId)));
 
@@ -158,7 +199,7 @@ Object.assign(globalThis, { window: dom.window, document: dom.window.document, H
 const sockets = [], calls = [], recovered = [], transcript = [];
 const captureStates = [], captureEnds = [];
 const savedUtterances = [{ speaker: "Lee Nazari", text: "Good morning, everyone.", ts: "2026-10-05T09:00:01Z" }, { speaker: "Buyer", text: "Let us discuss the product release plan.", ts: "2026-10-05T09:00:02Z" }];
-let turns = 0, phase = "recording", available = true, canonicalRoom = "lc-lee-room";
+let turns = 0, phase = "recording", available = true, canonicalRoom = "lc-lee-room", blockedStatus = null;
 let deferBackfill = null;
 globalThis.WebSocket = class {
   constructor(url) { this.url = url; sockets.push(this); }
@@ -166,6 +207,7 @@ globalThis.WebSocket = class {
 };
 globalThis.fetch = async (url, options) => {
   calls.push({ url: String(url), options });
+  if (String(url).startsWith("/api/meet/status") && blockedStatus) return Response.json({ error: "Live coaching is already open for a different call. End that call, then reopen this one." }, { status: blockedStatus });
   if (String(url).startsWith("/api/meet/status")) return Response.json(available ? {
     sessionId: canonicalRoom, botId: "bot-a", botName: "Lee's notetaker", canResume: phase === "recording",
     state: { phase, terminal: phase === "ended", message: phase, recording: phase === "recording", joined: phase === "recording", startedAt: "2026-10-05T09:00:00Z", endedAt: phase === "ended" ? "2026-10-05T10:00:00Z" : null },
@@ -245,6 +287,22 @@ available = true;
 await act(async () => { await new Promise((resolve) => setTimeout(resolve, 15500)); });
 assert.match(document.body.textContent, /In call/i, "A reservation created after opening the screen reconnects without refreshing or sending another bot");
 assert.deepEqual(recovered.at(-1), ["lc-lee-room", true]);
+
+for (const status of [400, 401, 403, 409]) {
+  blockedStatus = status;
+  const beforeBlocked = calls.length;
+  await render({ startRequest: 1 });
+  assert.match(document.body.textContent, /Coaching unavailable/);
+  assert.match(document.body.textContent, /End that call, then reopen this one/);
+  assert.doesNotMatch(document.body.textContent, /Connecting…/);
+  assert.equal(document.querySelector("button").disabled, true, "A hard recovery failure cannot dispatch a replacement bot");
+  assert.equal(calls.slice(beforeBlocked).some(c => c.url === "/api/meet/start" || c.url === "/api/meet/access"), false, "Pending start is blocked along with streaming");
+}
+blockedStatus = null;
+const beforeUnblocked = calls.length;
+await act(async () => { window.dispatchEvent(new window.Event("focus")); });
+assert.match(document.body.textContent, /In call/i, "Resolving the conflict recovers the existing notetaker on returning to the tab");
+assert.equal(calls.slice(beforeUnblocked).some(c => c.url === "/api/meet/start"), false);
 
 let release;
 deferBackfill = new Promise((resolve) => { release = resolve; });

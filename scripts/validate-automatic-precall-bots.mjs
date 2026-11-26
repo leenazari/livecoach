@@ -99,7 +99,8 @@ assert.match(migration, /scheduled_join_at timestamptz/);
 assert.match(migration, /status in \('scheduled', 'active', 'ended'\)/);
 assert.match(migration, /meet_bots_one_scheduled_upcoming_uidx/);
 assert.match(usage, /row\.scheduled_join_at \|\| row\.created_at/);
-assert.match(call, /scheduledCallSessionId\(upcoming\)/);
+assert.match(call, /scheduledCallSessionId\(upcoming, call.scheduled_at\)/);
+assert.doesNotMatch(call, /scheduledCallSessionId\(upcoming\)/, "The browser must not activate a temporary legacy room before the occurrence is verified");
 
 // Provider-side abandoned-call protection remains in force after the bot's
 // scheduled one-minute arrival.

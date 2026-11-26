@@ -1311,8 +1311,6 @@ export default function CallPage() {
       setSource("meet");
     }
     if (upcoming) {
-      const scheduledRoom = scheduledCallSessionId(upcoming);
-      if (scheduledRoom) setRoom(scheduledRoom);
       setIntentLoading(true);
       upcomingIdRef.current = upcoming;
       setUpcomingId(upcoming);
@@ -5001,7 +4999,13 @@ export default function CallPage() {
         {/* Unmount the transcription stage once the call has ended so the
             socket / mic / bot listener fully stops (no lingering billing). */}
         {!ended &&
-          (source === "meet" ? (
+          (upcomingId && callEntryState !== "ready" ? (
+            <p role="status" className="rounded-2xl border border-edge p-4 text-sm text-mist">
+              {callEntryState === "unavailable"
+                ? "This call could not be verified. Reopen it from your calls list to connect live coaching."
+                : "Connecting to this meeting's verified call session…"}
+            </p>
+          ) : source === "meet" ? (
             <MeetStage
               key={room}
               room={room}
