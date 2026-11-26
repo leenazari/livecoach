@@ -5,6 +5,8 @@ import { resolveCallLead } from "@/lib/call-subject";
 import { resolveWorkstreamFromAttendees } from "@/lib/workstreams";
 import { isUuid } from "@/lib/uuid";
 
+import { googleCalendarSeriesKey, googleCalendarSeriesPattern } from "@/lib/calendar-series-key";
+
 export const dynamic = "force-dynamic";
 
 function short(value: unknown, max = 145) {
@@ -27,7 +29,7 @@ export async function GET(_request: Request, { params }: { params: { id: string 
   if (!isUuid(params.id)) return reply({ error: "Scheduled call not found." }, 404);
   try {
     const { data: call, error } = await supabaseAdmin.from("upcoming_calls")
-      .select("id,company_id,workstream_id,title,attendees,prep")
+      .select("id,company_id,workstream_id,title,attendees,prep,source,external_id,scheduled_at")
       .eq("id", params.id).eq("workspace_id", scope.workspaceId).eq("owner_id", scope.userId)
       .maybeSingle();
     if (error) throw error;
@@ -49,6 +51,60 @@ export async function GET(_request: Request, { params }: { params: { id: string 
       gap: "",
       historyMatched: Boolean(verified),
     };
+
+    const seriesKey = googleCalendarSeriesKey(call.source, call.external_id);
+    if (seriesKey && call.scheduled_at) {
+      const { workspaceId, userId } = scope;
+      const { data: occurrences, error: occurrenceError } = await supabaseAdmin.from("upcoming_calls")
+        .select("id,external_id,scheduled_at")
+        .eq("workspace_id", workspaceId).eq("owner_id", userId).eq("source", "google")
+        .like("external_id", googleCalendarSeriesPattern(seriesKey))
+        .not("completed_at", "is", null).lt("scheduled_at", call.scheduled_at)
+        .gte("scheduled_at", new Date(Date.now() - 60 * 86400000).toISOString())
+        .order("scheduled_at", { ascending: false }).limit(24);
+      if (occurrenceError) throw occurrenceError;
+      const prior = (occurrences || []).filter(o => googleCalendarSeriesKey("google", o.external_id) === seriesKey);
+      if (prior.length) {
+        const { data: sessions, error: sessionError } = await supabaseAdmin.from("interview_sessions")
+          .select("session_id,upcoming_id")
+          .eq("workspace_id", workspaceId).eq("owner_id", userId)
+          .in("upcoming_id", prior.map(o => o.id)).not("ended_at", "is", null)
+          .order("ended_at", { ascending: false }).limit(48);
+        if (sessionError) throw sessionError;
+        const sessionIds = (sessions || []).map(row => row.session_id);
+        if (sessionIds.length) {
+          const [summaries, tasks] = await Promise.all([
+            supabaseAdmin.from("interview_summaries").select("id,session_id,created_at,summary")
+              .eq("workspace_id", workspaceId).eq("owner_id", userId)
+              .in("session_id", sessionIds).order("created_at", { ascending: false }).limit(48),
+            supabaseAdmin.from("tasks").select("id,text,due_at")
+              .eq("workspace_id", workspaceId).eq("owner_id", userId).eq("status", "open")
+              .in("source_ref", sessionIds).order("due_at", { ascending: true, nullsFirst: false })
+              .order("created_at", { ascending: false }).limit(2),
+          ]);
+          if (summaries.error || tasks.error) throw new Error("Recurring call history unavailable");
+          // Choose by occurrence date, so a newly recovered older summary can't
+          // displace the most recent actual meeting.
+          for (const occurrence of prior) {
+            const ids = new Set((sessions || []).filter(row => row.upcoming_id === occurrence.id).map(row => row.session_id));
+            const previous = (summaries.data || []).find(row => ids.has(row.session_id)
+              && String(row.summary?.recommendation || "").toLowerCase() !== "incomplete"
+              && short(row.summary?.headline || row.summary?.title));
+            if (!previous) continue;
+            const headline = short(previous.summary?.headline || previous.summary?.title);
+            const gaps = previous.summary?.notCovered;
+            return reply({
+              ...brief,
+              historyMatched: true,
+              lastCall: { id: previous.id, headline, at: occurrence.scheduled_at },
+              promises: (tasks.data || []).map(task => ({ id: task.id, text: short(task.text, 75), dueAt: task.due_at })).filter(task => task.text),
+              gap: Array.isArray(gaps) ? gaps.map(item => short(item, 90)).find(Boolean) || "" : "",
+              seriesHistory: true,
+            });
+          }
+        }
+      }
+    }
 
     if (verified) {
       const { workspaceId, userId } = scope;

@@ -6,9 +6,19 @@ const scheduled = { id: "call", company_id: "company", workstream_id: "thread" }
 let owned = true;
 let matched = "thread";
 let reads = [];
+let recurring = false;
+const series = "calendar_root";
+const seedId = series + "_20261126T103000Z";
+const previousId = series + "_20261125T103000Z";
+const otherId = "unrelated_root_20261125T111000Z";
+let queries = {};
 const fixtures = {
-  upcoming_calls: () => owned ? scheduled : null,
-  interview_summaries: () => ({ id: "prior", created_at: "2026-11-24", summary: { headline: "Agreed a pilot", notCovered: ["Who signs off on the pilot"] } }),
+  upcoming_calls: filters => filters.source === "google" ? [
+    { id: "other-standup", external_id: otherId, scheduled_at: "2026-11-25T11:10:00Z" },
+    { id: "prior-occurrence", external_id: previousId, scheduled_at: "2026-11-25T10:30:00Z" },
+  ] : owned ? { ...scheduled, ...(recurring ? { source: "google", external_id: seedId, scheduled_at: "2026-11-26T10:30:00Z" } : {}) } : null,
+  interview_sessions: () => [{ session_id: "prior-session", upcoming_id: "prior-occurrence" }],
+  interview_summaries: () => recurring ? [{ id: "series-summary", session_id: "prior-session", summary: { headline: "Deployment blocked on test data" } }] : ({ id: "prior", created_at: "2026-11-24", summary: { headline: "Agreed a pilot", notCovered: ["Who signs off on the pilot"] } }),
   tasks: () => [{ id: "task", text: "Send pilot scope", due_at: null }],
   workstreams: () => ({ email_context: "Another contact's email", email_context_meta: { email_context_counterparty_email: "other@example.test" } }),
 };
@@ -31,22 +41,35 @@ const deps = {
       select: () => query,
       eq: (field, value) => { filters[field] = value; return query; },
       order: () => query,
+      like: (field, value) => { filters[field] = value; return query; },
+      in: (field, values) => { filters[field] = values; return query; },
+      not: () => query,
+      lt: () => query,
+      gte: () => query,
       limit: () => query,
       maybeSingle: () => query,
       then(resolve) {
         reads.push(table);
+        queries[table] = filters;
         assert.equal(filters.workspace_id, "workspace");
         assert.equal(filters.owner_id, "rep");
-        if (table === "tasks" || table === "interview_summaries") {
+        if (!recurring && (table === "tasks" || table === "interview_summaries")) {
           assert.equal(filters.workstream_id, "thread");
           assert.equal(filters.company_id, "company");
         }
-        resolve({ data: fixtures[table](), error: null });
+        resolve({ data: fixtures[table](filters), error: null });
       },
     };
     return query;
   } } },
 };
+const seriesModule = { exports: {} };
+new Function("exports", ts.transpileModule(readFileSync(new URL("../lib/calendar-series-key.ts", import.meta.url), "utf8"), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS },
+}).outputText)(seriesModule.exports);
+deps["@/lib/calendar-series-key"] = seriesModule.exports;
+assert.equal(seriesModule.exports.googleCalendarSeriesKey("microsoft", seedId), null);
+assert.equal(seriesModule.exports.googleCalendarSeriesKey("google", "one-off"), null);
 const mod = { exports: {} };
 const code = ts.transpileModule(readFileSync(new URL("../app/api/crm/upcoming/[id]/brief/route.ts", import.meta.url), "utf8"), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
@@ -69,3 +92,13 @@ for (const thread of [null, "another-thread"]) {
 owned = false;
 assert.equal((await get()).status, 404);
 console.log("Pre-call brief: scoped history, unmatched contact, stale workstream and unowned event checks passed");
+
+owned = true;
+matched = null;
+recurring = true;
+const team = await get();
+assert.equal(team.body.seriesHistory, true);
+assert.equal(team.body.lastCall.id, "series-summary");
+assert.deepEqual(queries.interview_sessions.upcoming_id, ["prior-occurrence"]);
+assert.deepEqual(queries.tasks.source_ref, ["prior-session"]);
+console.log("Google series tests passed: no client required; different series excluded; actions scoped to matched sessions");

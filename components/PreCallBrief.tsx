@@ -12,6 +12,7 @@ type Brief = {
   promises: { id: string; text: string; dueAt: string | null }[];
   gap: string;
   historyMatched: boolean;
+  seriesHistory?: boolean;
 };
 
 function date(value: string) {
@@ -41,7 +42,7 @@ export default function PreCallBrief({ callId }: { callId: string }) {
         <dl className="grid gap-2 text-sm text-bone sm:grid-cols-[8rem_1fr]">
           <dt className="font-medium text-muted">Who’s on the call</dt>
           <dd>{brief.attendees.join(", ") || "No confirmed contacts shown"}{brief.attendeeCount > 3 ? ` +${brief.attendeeCount - 3} more` : ""}</dd>
-          <dt className="font-medium text-muted">Last conversation</dt>
+          <dt className="font-medium text-muted">{brief.seriesHistory ? "Last in this series" : "Last conversation"}</dt>
           <dd>
             {brief.lastCall && <Link className="underline decoration-edge hover:text-amber" href={`/crm/calls/${brief.lastCall.id}`}>{date(brief.lastCall.at)}: {brief.lastCall.headline}</Link>}
             {brief.email && <p className={brief.lastCall ? "mt-1" : undefined}>{brief.email.subject}: {brief.email.context}</p>}
@@ -52,7 +53,7 @@ export default function PreCallBrief({ callId }: { callId: string }) {
             <ul className="space-y-1">{brief.promises.map(task => <li key={task.id}>{task.text}{task.dueAt ? ` · Due ${date(task.dueAt)}` : " · No due date"}</li>)}</ul>
           ) : brief.historyMatched ? "None recorded." : "No verified follow-ups to show."}</dd>
           <dt className="font-medium text-muted">One thing to ask</dt>
-          <dd>{brief.gap ? `Can we clarify this open point: ${brief.gap.replace(/[?.!…]+$/, "")}?` : "What would make this call useful, and what next step should we agree?"}</dd>
+          <dd>{brief.gap ? `Can we clarify this open point: ${brief.gap.replace(/[?.!…]+$/, "")}?` : brief.seriesHistory ? "What’s still blocked since the last meeting, and who owns the next step?" : brief.lastCall || brief.email ? "What next step should we agree today?" : "No question suggested without meeting context."}</dd>
         </dl>
       )}
     </section>
