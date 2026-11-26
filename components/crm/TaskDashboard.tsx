@@ -55,6 +55,7 @@ type Task = TaskDashboardItem & {
     prospectName?: string | null;
     companyName?: string | null;
     approaches?: string[];
+    deliverableDraft?: { status: string; reason?: string | null; url?: string | null };
     [key: string]: unknown;
   } | null;
 };
@@ -660,6 +661,10 @@ export default function TaskDashboard() {
                           >
                             {capitaliseSentenceStarts(task.text)}
                           </p>
+                          {!done && task.payload?.deliverableDraft && <div className="mt-2 text-xs leading-5 text-amber">
+                            {task.payload.deliverableDraft.reason || (task.payload.deliverableDraft.status === "ready" ? "Gmail draft prepared. Review and send it to complete the promised follow-up." : "Draft preparation needs confirmation. Check Gmail Drafts before retrying.")}
+                            {task.payload.deliverableDraft.status === "ready" && <a className="ml-2 text-sky underline" href="https://mail.google.com/mail/u/0/#drafts" target="_blank" rel="noreferrer">Open Gmail Drafts</a>}
+                          </div>}
                           <div className="mt-2 flex flex-wrap items-center gap-2">
                             <span className="rounded-full border border-edge px-2 py-0.5 font-mono text-[0.5rem] uppercase tracking-wider text-muted">
                               {taskTypeLabel(task)}

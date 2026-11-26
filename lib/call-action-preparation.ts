@@ -179,7 +179,7 @@ export async function prepareCallActions(
             ? "next_step"
             : "commitment",
       linkKind:
-        action.kind === "email" && action.ownerType === "me"
+        (action.kind === "email" || (action.kind === "document" && action.coverEmailBody)) && action.ownerType === "me"
           ? "email"
           : "client",
       source: "call",
@@ -189,7 +189,7 @@ export async function prepareCallActions(
       dueAt: action.dueAt,
       payload: {
         actionType:
-          action.kind === "email" && action.ownerType === "me"
+          (action.kind === "email" || (action.kind === "document" && action.coverEmailBody)) && action.ownerType === "me"
             ? "email"
             : "task",
         ownerType: action.ownerType,
@@ -204,6 +204,11 @@ export async function prepareCallActions(
         preparationKind: action.kind,
         missingDetails: action.missingDetails,
         sourceQuote: action.sourceQuote,
+        // A prepared email or document is work still owed. Keep it prominent
+        // even when the speaker did not give an explicit calendar deadline.
+        ...(action.ownerType === "me" && ["email", "document"].includes(action.kind)
+          ? { pinned: true, urgency: "high", commitmentReminder: true }
+          : {}),
       },
     }));
     await upsertTasks(
