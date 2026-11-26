@@ -108,7 +108,8 @@ const gmail=compile('lib/gmail.ts',{'@/lib/google':{getAccessToken:async()=>'tes
 const evidence={trackingMessageId:tracking,recipient:'scott@example.com',bodyHash:hash(body),documents:[{name:'adam.pdf',size:pdf.length,sha256:hash(pdf)}]};
 assert.equal(await gmail.verifySentCallDeliverable(evidence,'owner'),'sent');
 includeAttachment=false;assert.equal(await gmail.verifySentCallDeliverable(evidence,'owner'),null,'sent acknowledgement with attachment removed does not fulfil a promise');
-includeAttachment=true;sentBody='Thanks, will send later';assert.equal(await gmail.verifySentCallDeliverable(evidence,'owner'),null,'changed acknowledgement does not count as promised delivery');
+includeAttachment=true;sentBody='Here you go, Scott. Kind regards, Lee';assert.equal(await gmail.verifySentCallDeliverable(evidence,'owner'),'sent','editing the covering email does not undo verified PDF delivery');
+sentBody='Thanks, will send later';assert.equal(await gmail.verifySentCallDeliverable({...evidence,documents:[]},'owner'),null,'an acknowledgement without the promised text does not complete a text-only follow-up');
 // Upload approval reads the actual private blob and pins its immutable digest.
 let savedConfig=null, storedBytes=pdf;
 const storageDb={...db,storage:{from:()=>({download:async()=>({data:new Blob([storedBytes]),error:null})})}};

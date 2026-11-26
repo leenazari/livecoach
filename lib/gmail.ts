@@ -578,7 +578,10 @@ export async function verifySentCallDeliverable(input: {
   const parts = flatten(sent.payload);
   const plain = parts.find(p => p.mimeType === "text/plain" && p.body?.data);
   const text = plain ? Buffer.from(plain.body.data, "base64url").toString("utf8").replace(/\s+/g, " ").trim() : "";
-  if (createHash("sha256").update(text).digest("hex") !== input.bodyHash) return null;
+  // The exact approved attachment is the delivery evidence for a document
+  // promise. Ordinary edits to its covering email or signature do not undo it.
+  // A text-only follow-up still needs its substantive prepared content.
+  if (!input.documents.length && createHash("sha256").update(text).digest("hex") !== input.bodyHash) return null;
   for (const document of input.documents) {
     const part = parts.find(p => p.filename === document.name && p.body?.size === document.size);
     if (!part) return null;
