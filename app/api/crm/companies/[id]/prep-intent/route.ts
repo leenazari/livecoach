@@ -257,7 +257,7 @@ export async function POST(
     const cached = workstream ? (thread as any)?.next_call : profile.next_call;
     const cacheHasLeadBinding = !!(
       cached &&
-      cached.intentPolicyVersion === 2 &&
+      cached.intentPolicyVersion === 3 &&
       Object.prototype.hasOwnProperty.call(cached, "basedOnLeadEmail") &&
       Object.prototype.hasOwnProperty.call(
         cached,
@@ -282,6 +282,8 @@ export async function POST(
           cached.basedOnSessionId === summaries[0]?.session_id)) &&
       cached.basedOnEmailAt === newestEmailAt
       && cached.basedOnMemoryHash === (commercialMemory?.sourceHash || null)
+      && cached.basedOnOpenTasks === JSON.stringify(openTasks)
+      && (!upcomingId || cached.basedOnUpcomingId === upcomingId)
       && cacheMatchesLead
     );
 
@@ -554,7 +556,9 @@ Return the JSON now.`;
     const cleanIntent = tidy(intent);
     const cleanRationale = rationale ? tidy(rationale) : "";
     const nextCall = {
-      intentPolicyVersion: 2,
+      intentPolicyVersion: 3,
+      basedOnOpenTasks: JSON.stringify(openTasks),
+      basedOnUpcomingId: upcomingId || null,
       intent: cleanIntent,
       rationale: cleanRationale,
       basedOnSummaryAt: newestSummaryAt,

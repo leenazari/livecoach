@@ -1,3 +1,4 @@
+import { recurringPrepIntent } from "@/lib/recurring-prep-intent";
 import { NextResponse } from "next/server";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -93,6 +94,16 @@ export async function GET(_request: Request, { params }: { params: { id: string 
             if (!previous) continue;
             const headline = short(previous.summary?.headline || previous.summary?.title);
             const gaps = previous.summary?.notCovered;
+            if (!brief.email && verified && primary?.email) {
+              const mail = await supabaseAdmin.from("workstreams").select("email_context,email_context_meta")
+                .eq("workspace_id", workspaceId).eq("owner_id", userId)
+                .eq("company_id", verified.companyId).eq("id", verified.id).maybeSingle();
+              if (mail.error) throw mail.error;
+              const context = short(mail.data?.email_context);
+              if (context && mail.data?.email_context_meta?.email_context_counterparty_email === primary.email) {
+                brief.email = { subject: "Recent email", context };
+              }
+            }
             return reply({
               ...brief,
               historyMatched: true,
@@ -134,5 +145,54 @@ export async function GET(_request: Request, { params }: { params: { id: string 
     return reply(brief);
   } catch {
     return reply({ error: "Couldn’t load the call brief. You can still start the call." }, 500);
+  }
+}
+
+// Reuse the exact same evidence as the visible brief. Persist only on POST,
+// and only if the invite and saved prep are still the ones we inspected.
+export async function POST(request: Request, context: { params: { id: string } }) {
+  let scope;
+  try { scope = requireRequestScope(); }
+  catch { return reply({ error: "Sign in to prepare this call." }, 401); }
+  const id = context.params.id;
+  if (!isUuid(id)) return reply({ error: "Scheduled call not found." }, 404);
+  try {
+    const { data: call, error } = await supabaseAdmin.from("upcoming_calls")
+      .select("id,source,external_id,scheduled_at,attendees,prep,intent,company_id,workstream_id")
+      .eq("id", id).eq("workspace_id", scope.workspaceId).eq("owner_id", scope.userId).maybeSingle();
+    if (error) throw error;
+    if (!call) return reply({ error: "Scheduled call not found." }, 404);
+    if (!googleCalendarSeriesKey(call.source, call.external_id)) return reply({ applies: false });
+    if (call.prep?.intentMeta?.source === "manual") return reply({ applies: true, intent: call.intent || "" });
+
+    const result = await GET(request, context);
+    if (!result.ok) return result;
+    const evidence = await result.json();
+    if (!evidence.seriesHistory) return reply({ applies: false });
+    const intent = recurringPrepIntent(evidence);
+    if (!intent) return reply({ applies: false });
+    const rationale = "Based on the last completed meeting in this calendar series and its verified follow-ups.";
+    if (call.intent === intent && call.prep?.intentMeta?.basis === "calendar_series")
+      return reply({ applies: true, intent, rationale });
+
+    let update = supabaseAdmin.from("upcoming_calls").update({
+      intent, prep: {
+        ...(call.prep || {}),
+        intentMeta: { source: "generated", basis: "calendar_series", rationale,
+          priorCallId: evidence.lastCall.id, savedAt: new Date().toISOString() },
+      },
+    }).eq("id", id).eq("workspace_id", scope.workspaceId).eq("owner_id", scope.userId)
+      .eq("external_id", call.external_id).eq("source", call.source).eq("scheduled_at", call.scheduled_at);
+    for (const field of ["company_id", "workstream_id", "attendees", "prep", "intent"] as const) {
+      const value = call[field];
+      update = value == null ? update.is(field, null)
+        : update.eq(field, typeof value === "object" ? JSON.stringify(value) : value);
+    }
+    const saved = await update.select("id").maybeSingle();
+    if (saved.error) throw saved.error;
+    if (!saved.data) return reply({ error: "The meeting prep changed. Reopen it to use the latest details." }, 409);
+    return reply({ applies: true, intent, rationale });
+  } catch {
+    return reply({ error: "Couldn’t prepare the recurring meeting intent. You can still start the call." }, 500);
   }
 }

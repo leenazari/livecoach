@@ -1038,7 +1038,7 @@ export default function CallPage() {
     const result = await refreshCallPrepContext(crmFetch, call);
     if (!result) return null;
     if (upcomingIdRef.current !== call.id ||
-        linkedCompanyRef.current?.id !== call.company_id ||
+        (linkedCompanyRef.current?.id || null) !== (call.company_id || null) ||
         (linkedWorkstreamRef.current?.id || null) !== (call.workstream_id || null)) {
       throw new Error("The call changed while checking email. Reopen its prep.");
     }
@@ -1427,9 +1427,10 @@ export default function CallPage() {
             setCallEntryState("ready");
             // Saved focus does not freeze the relationship. Always check the
             // exact guest's latest mail before updating the generated intent.
-            if (call?.company_id || call?.needsLeadConfirmation) {
+            let refreshedIntent = "";
+            if (call?.company_id || call?.needsLeadConfirmation || call?.source === "google") {
               try {
-                await refreshPrepContext({ ...call, id: upcoming, primaryAttendee: guest });
+                refreshedIntent = (await refreshPrepContext({ ...call, id: upcoming, primaryAttendee: guest }))?.intent || "";
               } catch (error: any) {
                 setEmailPullNote(error?.message || "Latest email could not be checked. Rebuild focus to retry.");
               }
@@ -1446,7 +1447,7 @@ export default function CallPage() {
               guest?.name || candidateRef.current || ft?.name || ""
             ).trim();
             const hasIntent =
-              !!(intent && intent.trim()) ||
+              !!refreshedIntent || !!(intent && intent.trim()) ||
               !!(call?.intent && String(call.intent).trim());
             if (
               !autoHelpedRef.current &&
