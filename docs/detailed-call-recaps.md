@@ -9,6 +9,10 @@ requested work from agreed commitments and retains only evidenced deadlines.
 
 - Meeting date, the named attendees evidenced by the call, and a short purpose
   or context sentence come first. Generic speaker labels are not people.
+- Top five requests then highlights the most important distinct requests from
+  the whole call, across all participants, before any per-person breakdown.
+  Short calls show only the requests that exist. Each bullet retains its named
+  owner, requested/agreed status, deadline and existing traffic-light label.
 - Action bullets are grouped by person. The receiving account's own actions
   appear first as Your priorities. Unconfirmed owners remain last.
 - Traffic lights are presentation only. Red means explicitly urgent, due today
@@ -20,8 +24,14 @@ requested work from agreed commitments and retains only evidenced deadlines.
   Requests remain distinct from agreements. Email opt-in and recipients are
   unchanged, and this format does not replay delivered emails.
 
-Formatting uses cached reviewed data and the exact recipient identity. It adds
-no model request. Unknown timing is not treated as low priority or completed.
+The existing privacy/coverage review selects the top five by evidenced business
+impact, blockers, dependencies, explicit emphasis and time-critical deadlines,
+not by speaking order or the recipient's seniority. Only approved action
+indices are accepted and their ranks stay on those canonical actions. No raw
+transcript, extra action list, extra AI request or task assignment is created.
+Cached reviewed recaps without ranks fall back to evidenced deadlines and the
+existing action order, without reprocessing the call or replaying sent emails.
+Unknown timing is not treated as low priority or completed.
 
 ## Grounding and privacy
 
@@ -56,8 +66,11 @@ the full source part rather than silently discarding its tail. The existing
 summary time budget and durable retry path remain in place.
 
 The saved-call screen and live debrief use the same read-only action register.
-They render every canonical action, grouped by owner, before any prepared action
-pack. Unconfirmed owners remain explicit. This view makes no requests, creates
+The existing summary pass ranks its call-wide overview using action indices,
+which are checked and attached to the corresponding normalized actions. Invalid
+rank references fall back safely without discarding the action register.
+They show the top requests first, then every canonical action, grouped by owner,
+before any prepared action pack. Unconfirmed owners remain explicit. This view makes no requests, creates
 no tasks and does not treat a recorded request as completed or agreed.
 
 ## Validation
@@ -70,6 +83,9 @@ Postgres RLS and the actual preference UI. `validate:call-summary-resilience`
 checks the existing durable summary path. No database migration is needed.
 The actual action-register component is also tested with 49 items, unconfirmed
 owners, call changes, malformed legacy values and escaped text.
+Overview tests cover late-call priorities, cross-person selection, only approved
+references, invalid/duplicate indices, fewer than five requests, duplicate text,
+preserved personal detail order and unchanged two-user delivery isolation.
 
 Generative completeness still requires transcript coverage review. The tests do
 not claim that a synthetic fixture proves every future model output is perfect.

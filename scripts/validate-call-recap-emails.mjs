@@ -17,7 +17,8 @@ function compile(path, deps = {}) {
   return exports;
 }
 const priorities = compile("lib/call-recap-priority.ts");
-const content = compile("lib/call-recap.ts", { "./call-recap-priority": priorities });
+const topRequests = compile("lib/call-top-requests.ts");
+const content = compile("lib/call-recap.ts", { "./call-recap-priority": priorities, "./call-top-requests": topRequests });
 const transcript = "You: We discussed a five minute demo for the admissions team.\nJane: I will send the requirements by Friday.\nYou: I will send the pilot outline tomorrow.\nJane: We agreed to start with one department.";
 const proposed = { shareable: true,
   points: [{ text: "We discussed a short demonstration for the admissions team.", evidence: "You: We discussed a five minute demo for the admissions team." }],
@@ -129,22 +130,57 @@ assert.match(samEmail.text, /Attendees\nLee, Sam, Dana/);
 assert.ok(samEmail.text.indexOf("Context\n") < samEmail.text.indexOf("Your priorities · Sam"));
 assert.ok(samEmail.text.indexOf("Your priorities · Sam") < samEmail.text.indexOf("\n\nDana\n"));
 assert.ok(danaEmail.text.indexOf("Your priorities · Dana") < danaEmail.text.indexOf("\n\nSam\n"));
-assert.ok(samEmail.text.indexOf("Test the urgent fix") < samEmail.text.indexOf("Check the next release"));
-assert.ok(samEmail.text.indexOf("Check the next release") < samEmail.text.indexOf("Plan the later release"));
-assert.ok(samEmail.text.indexOf("Plan the later release") < samEmail.text.indexOf("Discuss an undated improvement"));
-assert.equal((samEmail.html.match(/<li /g) || []).length, 6);
+const samDetails = samEmail.text.slice(samEmail.text.indexOf("Your priorities · Sam"));
+assert.ok(samDetails.indexOf("Test the urgent fix") < samDetails.indexOf("Check the next release"));
+assert.ok(samDetails.indexOf("Check the next release") < samDetails.indexOf("Plan the later release"));
+assert.ok(samDetails.indexOf("Plan the later release") < samDetails.indexOf("Discuss an undated improvement"));
+assert.equal((samEmail.html.match(/<li /g) || []).length, 11, "Five overview bullets do not replace any of the six detailed actions");
 for (const label of ["Due today", "Upcoming", "Later"]) assert.match(samEmail.html, new RegExp(label));
 for (const colour of ["#b42318", "#8a5700", "#16704a"]) assert.ok(samEmail.html.includes(colour));
 assert.doesNotMatch(content.renderCallRecap(priorityRecap, meetingAt, { recipientName: "Nobody" }).text, /Your priorities/);
 const noActions = content.renderCallRecap({ ...priorityRecap, actions: [] }, meetingAt);
 assert.match(noActions.text, /Review the job-page experience/); assert.doesNotMatch(noActions.text, /Your priorities|Agreed —/);
+assert.doesNotMatch(noActions.text, /Top requests|Top five requests/);
+const wholeCall = { ...priorityRecap, actions: [...priorityRecap.actions,
+  { ...priorityRecap.actions[0], owner: "Dana", task: "Unblock the client launch by fixing the booking failure", due: null },
+] };
+const approved = [0, 1, 3, 4, 5, 6];
+const rankedOverview = [6, 5, 1, 4, 0];
+const rankedRecap = content.selectReviewedCallRecap(wholeCall, { points: [0], decisions: [], actions: approved, coverageComplete: true, topActionIndices: rankedOverview });
+assert.equal(rankedRecap.actions.length, 6, "Ranking retains the complete approved action register");
+assert.deepEqual(plain(topRequests.topCallRequests(rankedRecap.actions, a => a.task).map(a => a.task)), rankedOverview.map(index => wholeCall.actions[index].task), "A late call request can lead the overview, independent of source or owner order");
+const rankedForSam = content.renderCallRecap(rankedRecap, meetingAt, { recipientName: "Sam", now: sendAt });
+const rankedForDana = content.renderCallRecap(rankedRecap, meetingAt, { recipientName: "Dana", now: sendAt });
+const overviewText = email => email.text.split("Top five requests\n")[1].split("\n\n")[0];
+assert.equal(overviewText(rankedForSam), overviewText(rankedForDana), "Call-wide priorities must not favour the email recipient");
+assert.equal(overviewText(rankedForSam).split("\n").length, 5);
+assert.match(overviewText(rankedForSam).split("\n")[0], /Dana.*Unblock the client launch/);
+assert.ok(rankedForSam.text.indexOf("Context\n") < rankedForSam.text.indexOf("Top five requests\n"));
+assert.ok(rankedForSam.text.indexOf("Top five requests\n") < rankedForSam.text.indexOf("Your priorities · Sam"));
+assert.doesNotMatch(JSON.stringify(rankedForSam), /evidence|sourceIds|topRequestRank|topActionIndices/);
+assert.equal((rankedForSam.html.match(/<li /g) || []).length, 11);
+for (const indices of [undefined, [], [6, 5, 1, 4, 0, 3], [6, 6, 1, 4, 0], [6, 2, 1, 4, 0], [99, 5, 1, 4, 0], ["6", 5, 1, 4, 0]]) {
+  assert.throws(() => content.selectReviewedCallRecap(wholeCall, { points: [0], decisions: [], actions: approved, topActionIndices: indices }), /TOP_REQUESTS/, "Only distinct approved action references can enter the overview");
+}
+const shortRecap = content.selectReviewedCallRecap(detailedRecap, { points: [], decisions: [], actions: [0, 1, 2], topActionIndices: [2, 0, 1] });
+const shortEmail = content.renderCallRecap(shortRecap, meetingAt);
+assert.match(shortEmail.text, /Top requests/); assert.doesNotMatch(shortEmail.text, /Top five requests/);
+assert.equal(shortEmail.text.split("Top requests\n")[1].split("\n\n")[0].split("\n").length, 3, "Short calls are never padded with invented requests");
+assert.equal(topRequests.topCallRequests([{ task: "Same request" }, { task: "same   request" }], a => a.task).length, 1, "Repeated wording cannot fill the overview twice");
+assert.equal(topRequests.validTopRequestIndices([0, 1], [{ task: "Same request" }, { task: "same   request" }], a => a.task), false);
 assert.equal(content.callRecapPassages("You: Ask Sharon to update her payroll details.").length, 0, "Private administrative asides are not forwarded");
 assert.deepEqual(plain(content.detailedRecapReviewInput(detailedRecap, detailedProposal, requestSource, "Lee").passages), plain(requestPassages), "Coverage review receives all safe source passages, not just selected evidence");
-const actionNormalizer = compile("lib/call-summary-actions.ts");
+const actionNormalizer = compile("lib/call-summary-actions.ts", { "./call-top-requests": topRequests });
 assert.equal(actionNormalizer.normalizeCallSummaryActions(manyProposal.actions.map(a => ({ owner: a.owner, text: a.task })), owner => owner).length, 35, "CRM action register does not silently slice at twelve");
 assert.equal(actionNormalizer.normalizeCallSummaryActions([{ owner: "", text: "Confirm the owner" }], () => "Sam")[0].owner, "Unassigned");
+const rawRankedActions = [null, { owner: "Sam", text: "First request" }, { owner: "Lee", text: "Important late request" }];
+const normalizedRanked = actionNormalizer.normalizeCallSummaryActions(rawRankedActions, owner => owner, [2, 1]);
+assert.equal(normalizedRanked[0].topRequestRank, 2); assert.equal(normalizedRanked[1].topRequestRank, 1, "Rank follows the original action even when malformed rows are removed");
+assert.equal(actionNormalizer.normalizeCallSummaryActions(rawRankedActions, owner => owner, [99])[0].topRequestRank, undefined);
 const summarySource = read("app/api/interview/summary/route.ts");
 assert.match(summarySource, /normalizeCallSummaryActions\(summary.actions/);
+assert.match(summarySource, /normalizeCallSummaryActions\(summary.actions,[^\n]+summary.topActionIndices/);
+assert.match(summarySource, /Rank evidenced business impact, blockers and dependencies/);
 assert.doesNotMatch(summarySource, /part.slice\(0, 4000\)|0 to 12 items/);
 const savedCallPage = read("app/crm/calls/[id]/page.tsx");
 assert.match(savedCallPage, /<CallActionRegister actions=\{s.actions\} hostName=\{s.hostName\}/);
@@ -225,7 +261,7 @@ const deps = {
       assert.equal(input.transcript, undefined, "Source text is passed once, as bounded references");
     }
     const reviewedRecap = review ? JSON.parse(p.messages[0].content).recap : null;
-    const verdict = review ? { ...Object.fromEntries(["points", "decisions", "actions"].map(section => [section, hold ? [] : reviewedRecap[section].map((_, index) => index)])), coverageComplete: !missingCoverage } : null;
+    const verdict = review ? { ...Object.fromEntries(["points", "decisions", "actions"].map(section => [section, hold ? [] : reviewedRecap[section].map((_, index) => index)])), coverageComplete: !missingCoverage, topActionIndices: hold ? [] : reviewedRecap.actions.map((_, index) => index).slice(0, 5) } : null;
     return { content: [{ type: "text", text: JSON.stringify(review ? verdict : detailedReferenced) }], usage: {} };
   } } } },
   "@/lib/usage": { logModelUsage: async () => {} }, "@/lib/call-recap": content,
@@ -386,23 +422,31 @@ assert.match(document.body.textContent, /Delivery needs checking/); assert.match
 assert.equal(uiPuts, 0, "Opening Settings is read-only");
 await act(async () => { document.querySelector("button").click(); });
 assert.equal(uiPuts, 1); assert.match(document.body.textContent, /Off · turn on/);
-const Register = compile("components/CallActionRegister.tsx").default;
+const Register = compile("components/CallActionRegister.tsx", { "@/lib/call-top-requests": topRequests }).default;
 const displayedActions = Array.from({ length: 49 }, (_, index) => ({ owner: index < 30 ? "Sam" : index < 40 ? "Lee" : "Unassigned", text: `Requested requirement ${index + 1}`, privateSource: "PRIVATE_SOURCE_NOT_FOR_DISPLAY" }));
 await act(async () => root.render(React.createElement(Register, { actions: displayedActions, hostName: "Lee" })));
-assert.equal(document.querySelectorAll("li").length, 49, "All recorded actions render without a preview cap");
+assert.equal(document.querySelector('[aria-label="Requests and actions by person"]').querySelectorAll("li").length, 49, "All recorded actions render without a preview cap");
+assert.equal(document.querySelector('[aria-label="Top requests from the whole call"]').querySelectorAll("li").length, 5);
+assert.equal(document.querySelector("section").getAttribute("aria-label"), "Top requests from the whole call");
 assert.match(document.body.textContent, /49 recorded items/);
 assert.match(document.body.textContent, /Requested requirement 49/);
 assert.doesNotMatch(document.body.textContent, /PRIVATE_SOURCE_NOT_FOR_DISPLAY/);
 assert.match(document.querySelector("h4").textContent, /Lee \(you\)/);
 assert.match([...document.querySelectorAll("h4")].at(-1).textContent, /Owner to confirm/);
 assert.equal(document.querySelectorAll("button, input").length, 0, "Viewing recorded requests cannot create or complete tasks");
+await act(async () => root.render(React.createElement(Register, { actions: displayedActions.map((a, index) => ({ ...a, ...(index >= 44 ? { topRequestRank: 49 - index } : {}) })), hostName: "Lee" })));
+const topSection = document.querySelector('[aria-label="Top requests from the whole call"]');
+assert.match(topSection.querySelector("li").textContent, /requirement 49/);
+assert.doesNotMatch(topSection.textContent, /requirement 1\b/);
+assert.equal(document.querySelector('[aria-label="Requests and actions by person"]').querySelectorAll("li").length, 49);
+assert.match(document.querySelector("h4").textContent, /Lee \(you\)/, "Personal detail ordering is preserved after the global overview");
 await act(async () => root.render(React.createElement(Register, { actions: [{ owner: "Cam", text: "A separate call <script>not executable</script>" }], hostName: "Cam" })));
-assert.equal(document.querySelectorAll("li").length, 1);
+assert.equal(document.querySelector('[aria-label="Requests and actions by person"]').querySelectorAll("li").length, 1);
 assert.equal(document.querySelectorAll("script").length, 0);
 assert.doesNotMatch(document.body.textContent, /Requested requirement|Lee|Sam/,
   "Changing the call renders only its supplied canonical actions, without stale rows");
 await act(async () => root.render(React.createElement(Register, { actions: [null, { owner: 42, text: "Owner unknown" }, { text: "" }] })));
-assert.equal(document.querySelectorAll("li").length, 1);
+assert.equal(document.querySelector('[aria-label="Requests and actions by person"]').querySelectorAll("li").length, 1);
 assert.match(document.body.textContent, /Owner to confirm/);
 await act(async () => root.render(React.createElement(Register, { actions: null })));
 assert.equal(document.querySelectorAll("section").length, 0);
