@@ -304,6 +304,7 @@ Output ONLY valid JSON (no markdown, no preamble) in exactly this shape:
   "myNextActions": ["a concrete thing the HOST (you / the person being coached) needs to DO after this call - an email to send, a person to speak to, a decision to make, a thing to prepare", "..."],
   "theirNextActions": ["something another participant SAID they would do - name who, e.g. 'Mark: test the workable integration before go-live'", "..."],
   "actions": [{"owner": "the EXACT name of the recipient or responsible person, as spelled in the transcript, or \"Unassigned\" if not clear", "text": "a concrete, individually actionable request with enough detail to carry it out, including a stated deadline if any. Prefix Requested or Agreed to distinguish asks from accepted commitments"}],
+  "topActionIndices": [],
   "suggestedNextActions": ["a smart next move YOU (the AI) recommend the host take - not necessarily said on the call, but the right strategic step given how it went", "..."],
   "notCovered": ["an area or question not yet explored", "..."],
   "styleProfile": "2-3 sentences on the host's speaking style and tone"
@@ -315,6 +316,7 @@ ACTIONS, read this twice:
 - The host's own actions get the host's name as owner, not "you" and not "me".
 - If the transcript does not actually say who owns something, set owner to "Unassigned". NEVER guess. An action pinned to the wrong person is worse than one left unassigned, because they will chase someone for a commitment that person never made.
 - Include EVERY distinct request and agreed action, not just twelve highlights. Split separate requested fixes, investigations, tests and follow-ups. Never collapse a detailed review into implement the feedback or review the layout. Include asks even without an explicit acceptance, labelled Requested. Label accepted commitments Agreed. Do not assign an instruction to the host merely because the host said it. Keep uncertain recipients Unassigned and never invent acceptance or a deadline. Do not create future tasks from completed live demonstration steps or hypothetical example conversations.
+- Populate topActionIndices with the zero-based integer indices of the five most important distinct actions, in descending importance. Use fewer only if fewer distinct requests exist, or [] for no requests. This is a short call-wide overview, not a replacement for the full register. Rank evidenced business impact, blockers and dependencies, explicit emphasis and time-critical deadlines. Consider every participant and the entire call, not just the first five requests or the host's actions. Do not invent urgency or include AI-suggested next steps that were not requested on the call. Keep every action in actions.
 
 COMPETENCIES TO SCORE:
 ${compInstruction}
@@ -485,7 +487,8 @@ Return the JSON assessment now.`;
       // read months later still knows who the host was.
       if (host.name) summary.hostName = host.name;
 
-      summary.actions = normalizeCallSummaryActions(summary.actions, raw => canonicalName(map, raw) || null);
+      summary.actions = normalizeCallSummaryActions(summary.actions, raw => canonicalName(map, raw) || null, summary.topActionIndices);
+      delete summary.topActionIndices;
     }
 
     // Robust cost: the browser meter sometimes reports nothing (a Meet/bot call
