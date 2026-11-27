@@ -7,9 +7,12 @@ import { connectedMailProvider, sendConnectedMail } from "@/lib/mail";
 import { loadHostIdentityForUser } from "@/lib/speakers";
 import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
-import { CALL_RECAP_KEY, CALL_RECAP_CURSOR_KEY, CALL_RECAP_GENERATION, CALL_RECAP_DETAIL_INSTRUCTIONS, CALL_RECAP_DETAIL_FORMAT, CALL_RECAP_DETAIL_REVIEW_FORMAT, CALL_RECAP_DETAIL_REVIEW_INSTRUCTIONS, detailedRecapReviewInput, selectReviewedCallRecap, callRecapReviewMessage, callRecapPassages, callRecapParticipants, recapPreference, validateDetailedCallRecap, renderCallRecap } from "@/lib/call-recap";
+import { CALL_RECAP_KEY, CALL_RECAP_CURSOR_KEY, CALL_RECAP_GENERATION, CALL_RECAP_DETAIL_INSTRUCTIONS, CALL_RECAP_PRIVATE_INSTRUCTIONS, CALL_RECAP_DETAIL_FORMAT, CALL_RECAP_DETAIL_REVIEW_FORMAT, CALL_RECAP_DETAIL_REVIEW_INSTRUCTIONS, detailedRecapReviewInput, selectReviewedCallRecap, callRecapReviewMessage, callRecapPassages, callRecapParticipants, recapPreference, validateDetailedCallRecap, renderCallRecap } from "@/lib/call-recap";
 
 const receiptQuery = (scope: RecordScope) => supabaseService.from("call_recap_emails").select("*").eq("workspace_id", scope.workspaceId).eq("owner_id", scope.userId);
+// Lee opted in to private recaps of his own calls in this workspace.
+const usesPrivateRecaps = (scope: RecordScope) => scope.workspaceId === "9961b7c1-413d-4c96-9bbd-64466ff9fe25"
+  && scope.userId === "783fca08-8385-451d-8f93-abd1f3e3d2aa";
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const textOf = (r: any) => (r?.content || []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("").trim();
 const uncertainMessage = "Email delivery was not confirmed. Check your inbox and sent mail before contacting support. LiveCoach will not send another copy automatically.";
@@ -140,7 +143,37 @@ export async function processCallRecapEmail(id: string) {
     if (transcript.length < 30 || transcript.length > 180000) throw new Error("RECAP_REVIEW_REQUIRED_LIMITS");
     const sourceHash = hash(transcript);
     const host = await loadHostIdentityForUser(scope.userId, scope.workspaceId);
-    let recap = row.source_hash === sourceHash && row.recap?.version === CALL_RECAP_GENERATION ? row.recap : null;
+    const privateRecap = usesPrivateRecaps(scope);
+    let recap = (!privateRecap || row.recap?.privateRecipient === true) && row.source_hash === sourceHash && row.recap?.version === CALL_RECAP_GENERATION ? row.recap : null;
+    if (!recap && privateRecap) {
+      const passages = callRecapPassages(transcript, true);
+      const response = await openai.messages.create({ model: OPENAI_MODEL_LIVE, max_tokens: 14000, temperature: 0,
+        system: CALL_RECAP_PRIVATE_INSTRUCTIONS,
+        response_format: CALL_RECAP_DETAIL_FORMAT,
+        messages: [{ role: "user", content: JSON.stringify({ hostName: host.name, passages }) }],
+      });
+      await logModelUsage("call_recap_email", "live", (response as any).usage, { stop_reason: response.stop_reason, receipt_id: id }, scope);
+      if (response.stop_reason === "max_tokens") throw new Error("RECAP_REVIEW_REQUIRED_FORMAT");
+      let parsed: any;
+      try { parsed = JSON.parse(textOf(response)); } catch { throw new Error("RECAP_REVIEW_REQUIRED_FORMAT"); }
+      if (parsed?.complete !== true) {
+        const repair = await openai.messages.create({ model: OPENAI_MODEL_LIVE, max_tokens: 14000, temperature: 0,
+          system: `${CALL_RECAP_PRIVATE_INSTRUCTIONS}\nCompare the previous extraction with the entire transcript. Return a corrected recap with any missed requests restored and keep all verified work already captured.`,
+          response_format: CALL_RECAP_DETAIL_FORMAT,
+          messages: [{ role: "user", content: JSON.stringify({ hostName: host.name, passages, previousExtraction: parsed }) }],
+        });
+        await logModelUsage("call_recap_email", "live", (repair as any).usage, { stop_reason: repair.stop_reason, receipt_id: id }, scope);
+        try {
+          const corrected = JSON.parse(textOf(repair));
+          if (repair.stop_reason !== "max_tokens" && corrected?.complete === true) {
+            validateDetailedCallRecap(corrected, transcript, host.name || "", true);
+            parsed = corrected;
+          }
+        } catch { /* Keep the initial recap and flag incomplete coverage. */ }
+      }
+      recap = { ...validateDetailedCallRecap(parsed, transcript, host.name || "", true), privateRecipient: true, coverageIncomplete: parsed?.complete !== true };
+      await update({ status: "ready", recap, source_hash: sourceHash, meeting_at: session.started_at || session.created_at, last_error: null });
+    }
     if (!recap) {
       let parsed: any = row.source_hash === sourceHash && row.recap?.version === 0 && row.recap?.generation === CALL_RECAP_GENERATION ? row.recap.proposed : null;
       if (!parsed) {
@@ -190,7 +223,7 @@ export async function processCallRecapEmail(id: string) {
     if (!connection.provider || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) throw new Error("RECAP_MAILBOX_UNAVAILABLE");
     // Formatting is universal, but priority order is the exact recipient's.
     // Refresh attendees from this verified source even when using cached v2 data.
-    const message = renderCallRecap({ ...recap, participants: callRecapParticipants(transcript, host.name) }, session.started_at || session.created_at, { recipientName: host.name });
+    const message = renderCallRecap({ ...recap, participants: callRecapParticipants(transcript, host.name) }, session.started_at || session.created_at, { recipientName: host.name, privateRecipient: privateRecap, coverageIncomplete: recap.coverageIncomplete === true });
     // Durable send barrier. Even if the process dies, the next run only reports
     // an uncertain outcome. It never retries the external side effect.
     await update({ status: "sending", recipient, last_error: null });
